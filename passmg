@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.8 2001/07/17 01:37:33 matthewm Exp matthewm $
+# $Id: passmg,v 1.9 2001/07/18 02:21:14 matthewm Exp matthewm $
 
 # PERL DOC #################################################################
 
@@ -93,7 +93,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.8 2001/07/17 01:37:33 matthewm Exp matthewm $
+$Id: passmg,v 1.9 2001/07/18 02:21:14 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -143,7 +143,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.8 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.9 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -252,6 +252,7 @@ sub main () {
 			print STDERR "Key creation failed\n";
 			exit(1);
 		}
+		putlog('notice', "Completed.");
 		print "\nDone\n";
 		exit(0);
 	}
@@ -362,7 +363,7 @@ sub main () {
 				exit(1);
 			}
 		}
-
+		putlog('notice', "Completed.");
 		print STDOUT "\nDone.\n";
 		exit(0);
 	}
@@ -378,6 +379,7 @@ sub main () {
 			s/\.asc$//;
 			print "$_\n";
 		}
+		putlog('notice', "Completed.");
 		print STDOUT "\nDone.\n";
 		exit(0);
 	}
@@ -421,6 +423,7 @@ sub main () {
 			print STDERR "Asc encryption failed\n";
 			exit(1);
 		}
+		putlog('notice', "Completed.");
 		print STDOUT "\nDone.\n";
 		exit(0);
 	}
@@ -437,6 +440,7 @@ sub main () {
 			print STDERR "Asc deleltion failed\n";
 			exit(1);
 		}
+		putlog('notice', "Completed.");
 		print STDOUT "\nDone.\n";
 		exit(0);
 	}
