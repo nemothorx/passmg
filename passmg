@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.10 2001/07/18 02:53:08 matthewm Exp root $
+# $Id: passmg,v 1.11 2001/09/10 23:43:02 root Exp root $
 
 # PERL DOC #################################################################
 
@@ -93,7 +93,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.10 2001/07/18 02:53:08 matthewm Exp root $
+$Id: passmg,v 1.11 2001/09/10 23:43:02 root Exp root $
 
 =head1 AUTHOR
 
@@ -116,7 +116,7 @@ use POSIX qw(:termios_h);
 use Sys::Syslog;
 use Sys::Syslog qw(:DEFAULT setlogsock);
 
-use vars qw/ $ARGV0 $VER $DEBUG /;
+use vars qw/ @_ARGV $ARGV0 $VER $DEBUG /;
 
 sub main ();
 sub show_help ();
@@ -133,17 +133,20 @@ sub decrypt_asc ($$$);
 sub delete_asc ($);
 sub putlog ($$);
 
-$ARGV0 = basename($0);
-$0 = getcwd() . "/$0" unless ($0 =~ /^\//);
-1 while ($0 =~ s%/\./%/%);
-1 while ($0 =~ s%/[^/]+/\.\./%/%);
-1 while ($0 =~ s%^/\.\./%/%);
-$0 =~ s%/+%/%g;
-$0 =~ /(.+)/;
-$0 = $1;
+$ARGV0 = ($0 =~ /^\/|^[a-zA-Z]:/) ? $0 : getcwd() . "/$0";
+$ARGV0 =~ s%\\%/%g;
+1 while ($ARGV0 =~ s%/\./%/%);
+1 while ($ARGV0 =~ s%/[^/]+/\.\./%/%);
+1 while ($ARGV0 =~ s%^/\.\./%/%);
+foreach ($ARGV0, @ARGV) {
+        s%/+%/%g;
+        /(.+)/;
+        push(@_ARGV, $1)
+}
+$ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.10 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.11 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
