@@ -23,6 +23,7 @@ sub check_key ($);
 sub check_auth ($$);
 sub create_key ($);
 sub delete_key ($);
+sub rename_key ($);
 sub import_keys ();
 sub list_ascs ();
 sub encrypt_asc ($$@);
@@ -56,7 +57,7 @@ sub main () {
 	my($user, $pass, $buf);
 	my(@pub, @asc);
 
-	unless (getopts('hvilcadpg:r:', \%opts)) {
+	unless (getopts('hvilcCadg:r:', \%opts)) {
 		show_help();
 		exit(1);
 	}
@@ -77,11 +78,11 @@ sub main () {
 		exit(0);
 	}
 
-	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{p}) && ($#ARGV > 1)) {
+	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV > 1)) {
 		print STDERR "Error: redundant command argument(s) specified.\n";
 		show_help();
 		exit(1);
-	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{p}) && ($#ARGV < 0)) {
+	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV < 0)) {
 		1; # that's fine - do nothing
 	} elsif ($#ARGV > 0) {
 		print STDERR "Error: redundant command argument(s) specified.\n";
@@ -149,12 +150,29 @@ sub main () {
 	$pass = get_passwd("Enter your password");
 
 	unless (($user = getpwuid($>))
+		 && (($>, $)) = ($<, $())
 		 && (check_key($user))
 		 && (check_auth($user, $pass))) {
                 print STDERR "Authorization refused.\n";
 		exit(1);
 	}
 
+	$> = $<; $) = $(;  # run as owner with out apparent suidness.
+
+
+	if ($opts{C}) {
+		print STDOUT "\nChanging key for $user...\n";
+		unless (rename_key($user)) {
+			print STDERR "Old key rename failed\n";
+			exit(1);
+		}
+		unless (create_key($user)) {
+			print STDERR "New key creation failed\n";
+			exit(1);
+		}
+		$user .= ".tmp";
+	}
+		
 	if ($opts{g}) {
 		print STDOUT "\nCreating key for $opts{g} ...\n";
 		unless ($> == $<) {
@@ -191,7 +209,7 @@ sub main () {
 		}
 	}
 
-	if ($opts{g} || $opts{r}) {
+	if ($opts{g} || $opts{r} || $opts{C}) {
 		print STDOUT "\nRe-encrypting asc files ...\n";
 		unless (@pub = import_keys()) {
 			print STDERR "Key import failed\n";
@@ -208,6 +226,13 @@ sub main () {
 			}
 			unless (encrypt_asc($buf, $_, @pub)) {
 				print STDERR "Asc encryption failed: $_\n";
+			}
+		}
+
+		if ($opts{C}) {
+			unless (delete_key($user)) {
+				print STDERR "Old Key deletion failed\n";
+				exit(1);
 			}
 		}
 
@@ -276,16 +301,6 @@ sub main () {
 		exit(0);
 	}
 
-	if ($opts{p}) {
-		print STDOUT "\nChanging your password ...\n";
-		unless (change_pass($user, $pass)) {
-			print STDERR "Key change failed\n";
-			exit(1);
-		}
-		print STDOUT "Done.\n";
-		exit(0);
-	}
-
 	print STDOUT "\nDecrypting asc file $ARGV[0] ...\n";
 	unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
 		print STDERR "Asc decryption failed\n";
@@ -307,6 +322,7 @@ sub show_help () {
 		-h  show help: causes this message to be shown.
 		-l  list keys: lists all keys that are available.
 		-c  change key: changes the stored password for a key.
+		-C  change pass: changes the access password for user.
 		-a  add key: adds a new key entry to the password list.
 		-d  delete key: deletes a key from the password list.
 
@@ -347,105 +363,12 @@ sub get_passwd ($) {
 	return($key);
 }
 
-sub change_pass ($$) {
-	my($usr) = $_[0];
-	my($key) = $_[1];
-	my($buf, $newkey);
-	my($p) = gensym;
-	my($r1) = gensym;
-	my($w1) = gensym;
-	my($r2) = gensym;
-	my($w2) = gensym;
-
-	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
-		return(0);
-	}
-
-	$newkey = get_passwd("Enter new password");
-
-	unless (pipe($r1, $w1)) {
-		print STDERR "Error: unable to create password channel: $!\n";
-		return(undef);
-	}
-	unless (fcntl($r1, F_GETFD, $buf)) {
-		print STDERR "Error: unable to F_GETFD on password channel: $!\n";
-	}
-	$buf &= FD_CLOEXEC;
-	unless (fcntl($r1, F_SETFD, $buf)) {
-		print STDERR "Error: unable to F_SETFD on password channel: $!\n";
-	}
-
-	unless (pipe($r2, $w2)) {
-		print STDERR "Error: unable to create command channel: $!\n";
-		return(undef);
-	}
-	unless (fcntl($r2, F_GETFD, $buf)) {
-		print STDERR "Error: unable to F_GETFD on command channel: $!\n";
-	}
-	$buf &= FD_CLOEXEC;
-	unless (fcntl($r2, F_SETFD, $buf)) {
-		print STDERR "Error: unable to F_SETFD on command channel: $!\n";
-	}
-
-        $buf = open($p, "-|");
-
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for passwd change: $!\n";
-		return(0);
-        } elsif ($buf == 0) {
-#                unless (close(STDERR) && open(STDERR, ">&STDOUT")) {
-#			print STDERR "Error: unable to map gpg's stderr to stdout: $!\n";
-#			exit(1);
-#		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
-                exec {'gpg'} ('gpg', '--edit',
-			'--passphrase-fd', fileno($r1),
-			'--command-fd', fileno($r2),
-			'--status-fd', '1',
-			'--no-default-keyring',
-			'--keyring', "$usr.pub",
-			'--secret-keyring', "$usr.sec",
-			"$usr");
-                print STDERR "Error: unable to exec gpg for passwd change: $!\n";
-		exit(1);
-        }
-
-	select($w2); $| = 1;
-	select($w1); $| = 1;
-
-	print $w1 "$key\0$newkey";
-
-	$buf = undef;
-	while (<$p>) {
-		print STDERR "### $_" if ($DEBUG);
-#		if (/ NEED_PASSPHRASE_SYM /) {
-#			print $w1 $newkey || print STDERR "newkey: $!\n";
-		if (/ GET_LINE /) {
-			print $w2 $buf = ($buf ? "save\n" : "passwd\n");
-		}
-	}
-	print STDERR "*** Closing pipe: " . fileno($p) . " ...\n" if ($DEBUG);
-        close($p);
-
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: passwd changing gpg process was killed: $buf\n";
-		return(0);
-        }
-
-        $buf = $? >> 8;
-	if ($buf != 0) {
-                print STDERR "Error: passwd changing gpg process returned non-zero: $buf\n";
-		return(0);
-        }
-
-	return(1);
-}
-
 sub check_key ($) {
 	my($usr) = $_[0];
 	my($p) = gensym;
 	my($buf, $out);
+
+	print STDERR "Checking key for $usr\n";
 
 	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
 		return(0);
@@ -465,7 +388,6 @@ sub check_key ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '-q',
 			'--list-secret-keys', '--no-default-keyring',
 			'--keyring', "$usr.pub", '--secret-keyring', "$usr.sec");
@@ -475,7 +397,7 @@ sub check_key ($) {
 	
 	while (<$p>) {
 		chomp();
-		next unless (/^sec\s.*( |\(|<)($usr)( \)|@)/);
+		next unless (/^sec\s.+( |\(|<)($usr)( \)|@)/);
 		$out = $2;
 	}
 
@@ -486,6 +408,8 @@ sub check_key ($) {
                 print STDERR "Error: key verifing gpg process was killed: $buf\n";
 		return(0);
         }
+
+	print STDERR "Checked key: $out\n";
 
 	return(0) unless ($out);
 
@@ -508,11 +432,10 @@ sub check_auth ($$) {
                 print STDERR "Error: unable to fork gpg for authenticaton: $!\n";
 		return(0);
         } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+                unless (($DEBUG) || (close(STDERR) && open(STDERR, "</dev/null"))) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
 			'--no-tty', '--passphrase-fd', '0',
 			'--no-default-keyring',
@@ -559,7 +482,6 @@ sub create_key ($) {
                 print STDERR "Error: unable to fork gpg for key creation: $!\n";
 		return(0);
         } elsif ($buf == 0) {
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '--no-greeting',
 			'--no-default-keyring',
 			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
@@ -603,20 +525,37 @@ sub create_key ($) {
 
 sub delete_key ($) {
 	my($usr) = $_[0];
-	my(@pwe);
 
-	unless (@pwe = getpwnam($usr)) {
-		print STDERR "Error: Can't find details for user $usr: $!\n";
-		return(0);
-	}
-	$pwe[0] =~ /^(.*)$/; $usr = $1;
+	$usr =~ /^([\w\.\-]+)$/;
+	$usr = $1;
 
 	unless (unlink("$usr.sec")) {
 		print STDERR "Warning: unable to delete key: $usr.sec: $!\n";
+		return(0);
 	}
 
 	unless (unlink("$usr.pub")) {
 		print STDERR "Warning: unable to delete key: $usr.pub: $!\n";
+		return(0);
+	}
+
+	return(1);
+}
+
+sub rename_key ($) {
+	my($usr) = $_[0];
+
+	$usr =~ /^([\w\.\-]+)$/;
+	$usr = $1;
+
+	unless (rename("$usr.sec", "$usr.tmp.sec")) {
+		print STDERR "Error: unable to rename key: $usr.sec: $!\n";
+		return(0);
+	}
+
+	unless (rename("$usr.pub", "$usr.tmp.pub")) {
+		print STDERR "Error: unable to rename key: $usr.pub: $!\n";
+		return(0);
 	}
 
 	return(1);
@@ -624,7 +563,7 @@ sub delete_key ($) {
 
 sub import_keys () {
 	my($d) = gensym();
-	my($buf, @pub);
+	my($buf, @buf, @pub);
 
 	unless (( ! -e 'pubring.gpg')  || unlink('pubring.gpg')) {
 		print STDERR "Error: unable to unlink existing pubring.gpg: $!\n";
@@ -640,7 +579,12 @@ sub import_keys () {
 		return(());
 	}
 
-	@pub = grep { /\.pub$/ } readdir($d);
+	@buf =  readdir($d);
+
+	foreach (@buf) {
+		next unless (/^([^\.]+\.pub)$/);
+		push @pub, $1;
+	}
 
 	close($d);	
 
@@ -663,7 +607,6 @@ sub import_keys () {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '--fast-import', @pub);
                 print STDERR "Error: unable to exec gpg for import: $!\n";
 		exit(1);
@@ -698,7 +641,7 @@ sub list_ascs () {
 	@buf =  readdir($d);
 
 	foreach (@buf) {
-		next unless (/^(.*@.*\.asc)$/);
+		next unless (/^(.+@.+\.asc)$/);
 		push @asc, $1;
 	}
 
@@ -737,7 +680,6 @@ sub check_asc ($) {
 			print STDERR "Error: unable to map gpg's stderr to stdout: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '-q',
 			'--list-only', '--no-default-keyring',
 			'--keyring', '/dev/null', '--secret-keyring', '/dev/null',
@@ -792,7 +734,6 @@ sub encrypt_asc ($$@) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
                 exec {'gpg'} ('gpg', '-a', '--encrypt', '--always-trust', 
 			@pub, '-o', $file);
                 print STDERR "Error: unable to exec gpg for encryption: $!\n";
@@ -861,7 +802,6 @@ sub decrypt_asc ($$$) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		$> = $<; $) = $(; # gpg is a prick about suidness
 		print STDERR "Reading password from " . fileno($r) . "\n";
                 exec {'gpg'} ('gpg', '--decrypt', 
 			'--no-tty', '--passphrase-fd', fileno($r),
