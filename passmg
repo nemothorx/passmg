@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.18 2003/12/30 01:23:42 root Exp matthewm $
+# $Id: passmg,v 1.19 2004/07/19 06:33:54 matthewm Exp matthewm $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -116,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.18 2003/12/30 01:23:42 root Exp matthewm $
+$Id: passmg,v 1.19 2004/07/19 06:33:54 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -169,7 +169,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.18 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.19 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -192,12 +192,12 @@ sub main () {
 	$args =~ /(.+)/;
 	$args = $1;
 
-	unless (getopts('hvicCadl:g:r:', \%opts)) {
+	unless (getopts('hvicCadl:g:r:H:', \%opts)) {
 		show_help();
 		exit(1);
 	}
 
-	if (scalar keys %opts > 1) {
+	if (defined($opts{H}) && (scalar keys %opts > 2) || (!defined($opts{H}) && scalar keys %opts > 1)) {
 		print STDERR "Error: only one function may be specified at once.\n";
 		show_help();
 		exit(1);
@@ -211,6 +211,20 @@ sub main () {
 	if ($opts{v}) {
 		print STDOUT "$ARGV0 version $VER\n";
 		exit(0);
+	}
+
+	if (defined($opts{H})) {
+		unless (($opts{H} > 0) && ($opts{H} =~ /^(\d+)$/)) {
+			print STDERR "Error: invalid history option specified.\n";
+			show_help();
+			exit(1);
+		}
+		$HIST = $1;
+		unless ($opts{c}) {
+			print STDERR "Error: history only valid when changing keys.\n";
+			show_help();
+			exit(1);
+		}
 	}
 
 	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV > 1)) {
@@ -484,7 +498,7 @@ sub main () {
 		print STDERR "Asc decryption failed\n";
 		exit(1);
 	}
-	print $buf;
+	print "\n$buf\n";
 		
 	putlog('notice', "Completed.");
 	print STDOUT "Done.\n";
@@ -509,6 +523,8 @@ sub show_help () {
 		-g <user>: Grants a user access to managed passwords. 
 		-r <user>: Revokes a user's acesss to passwords.
 
+		-H <number>:  used with -c to specify the number of past
+                       passwords to retain.  Must be 1 or greater.
 		\n";
 	return();
 }
