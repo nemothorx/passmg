@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.19 2004/07/19 06:33:54 matthewm Exp matthewm $
+# $Id: passmg,v 1.20 2004/07/19 07:05:01 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -116,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.19 2004/07/19 06:33:54 matthewm Exp matthewm $
+$Id: passmg,v 1.20 2004/07/19 07:05:01 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -139,7 +139,7 @@ use POSIX qw(:termios_h);
 use Sys::Syslog;
 use Sys::Syslog qw(:DEFAULT setlogsock);
 
-use vars qw/ @_ARGV $ARGV0 $VER $DEBUG $HIST /;
+use vars qw/ @_ARGV $ARGV0 $VER $DEBUG $HIST $OWNER /;
 
 sub main ();
 sub show_help ();
@@ -169,13 +169,15 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.19 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.20 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
 $DEBUG = 0;
 
 $HIST = 3;
+
+$OWNER = 0;
 
 main();
 
@@ -252,10 +254,13 @@ sub main () {
 		print STDERR "Fatal: stdin is not a tty device: $!\n";
 		exit(1);
 	}
-	if (($> == $<) && ($buf !~ /^\/dev\/tty[0-9A-Z]+$/)) {
-		putlog('warning', "Called by owner from non-console: $buf");
-		print STDERR "Fatal: run by owner from non-console: $buf\n";
-		exit(1);
+	if ($> == $<) {
+		$OWNER=1;
+		if ($buf !~ /^\/dev\/tty[0-9A-Z]+$/) {
+			putlog('warning', "Called by owner from non-console: $buf");
+			print STDERR "Fatal: run by owner from non-console: $buf\n";
+			exit(1);
+		}
 	}
 
 	putlog('notice', "Started: $>/$< on $buf");
@@ -268,7 +273,7 @@ sub main () {
 	}
 
 	if ($opts{i}) {
-		unless ($> == $<) {
+		unless ($OWNER) {
 			putlog('warning', "Attempt to initilise repository by non-owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
@@ -333,8 +338,8 @@ sub main () {
 		
 	if ($opts{g}) {
 		print STDOUT "\nCreating key for $opts{g} ...\n";
-		unless ($> == $<) {
-			putlog('notice', "Incomplete: Need to be owner");
+		unless ($OWNER) {
+			putlog('warning', "Attempt to grant access to $opts{g} by non-owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
@@ -352,8 +357,8 @@ sub main () {
 
 	if ($opts{r}) {
 		print STDOUT "\nRevoking key for $opts{r} ...\n";
-		unless ($> == $<) {
-			putlog('notice', "Incomplete: Need to be owner");
+		unless ($OWNER) {
+			putlog('warning', "Attempt to revoke access from $opts{r} by non-owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
