@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.11 2001/09/10 23:43:02 root Exp root $
+# $Id: passmg,v 1.12 2001/10/02 06:21:40 root Exp matthewm $
 
 # PERL DOC #################################################################
 
@@ -53,9 +53,9 @@ Will print a brief description of usage and paremeters.
 
 Will print the version identifier for the program.
 
-=head2 B<-l>
+=head2 B<-l regex>
 
-Will list the available encrypted password files.
+Will list the available encrypted password files matching the provided regex.
 
 =head2 B<-C>
 
@@ -93,7 +93,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.11 2001/09/10 23:43:02 root Exp root $
+$Id: passmg,v 1.12 2001/10/02 06:21:40 root Exp matthewm $
 
 =head1 AUTHOR
 
@@ -146,7 +146,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.11 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.12 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -167,7 +167,7 @@ sub main () {
 	$args =~ /(.+)/;
 	$args = $1;
 
-	unless (getopts('hvilcCadg:r:', \%opts)) {
+	unless (getopts('hvicCadl:g:r:', \%opts)) {
 		show_help();
 		exit(1);
 	}
@@ -178,12 +178,12 @@ sub main () {
 		exit(1);
 	}
 
-	if ($opts{'h'}) {
+	if ($opts{h}) {
 		show_help();
 		exit(0);
 	}
 
-	if ($opts{'v'}) {
+	if ($opts{v}) {
 		print STDOUT "$ARGV0 version $VER\n";
 		exit(0);
 	}
@@ -204,7 +204,7 @@ sub main () {
 		$ARGV[0] = $1;
 	} else {
 		$ARGV[0] =~ s/[\w@\-\.]+//g;
-		print STDERR "Error: bogus characters in key\@host: '$ARGV[0]'\n";
+		print STDERR "Error: bogus characters in argument: '$ARGV[0]'\n";
 		exit(1);
 	}
 	
@@ -380,6 +380,7 @@ sub main () {
 		}
 		foreach (@asc) {
 			s/\.asc$//;
+			next unless (/$opts{l}/);
 			print "$_\n";
 		}
 		putlog('notice', "Completed.");
@@ -469,11 +470,12 @@ sub show_help () {
 	usage: $ARGV0 [<opts>] [<key\@host>]
 		-v  show version: will display the RCS rev.
 		-h  show help: causes this message to be shown.
-		-l  list keys: lists all keys that are available.
 		-c  change key: changes the stored password for a key.
 		-C  change pass: changes the access password for user.
 		-a  add key: adds a new key entry to the password list.
 		-d  delete key: deletes a key from the password list.
+
+		-l <regex>: list all the keys matching the regex
 
 		-g <user>: Grants a user access to managed passwords. 
 		-r <user>: Revokes a user's acesss to passwords.
