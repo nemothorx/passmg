@@ -1,5 +1,105 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.6 2001/06/12 05:23:41 matthewm Exp matthewm $
+# $Id: passmg,v 1.7 2001/06/12 05:56:40 matthewm Exp matthewm $
+
+# PERL DOC #################################################################
+
+=head1 NAME
+
+B<passmg> - A utility for managing and accessing stored passwords.
+
+=head1 SYNOPSIS
+
+B<passmg> [-h|-v|-l|-C]
+
+B<passmg> [-c|-a|-d] [key@host]
+
+B<passmg> [-g|-r] [user]
+
+=head1 DESCRIPTION
+
+B<passmg> is a suid perl script designed to lessen the problems
+of shared/common passwords amongst administators.  Although having
+passwords being used by multiple individuals is itself a risk,
+especially when auditing actions taken with that password, it is
+often an inescapable nessessity.  This problem is further aggrevated by
+a tendency to change shared passwords very infrequently due largly to
+the difficulties involved in diseminating the new passwords to all
+parties in a way that does not itself further compromise it.
+
+B<passmg> addresses this problem by keeping a central repository
+of passwords stored in PGP encrypted files.  Each user who has
+been granted access to the repository has their own PGP secret
+and private key pair.  Each password file is encrypted using all
+the available public keys meaning each user can access the respository
+using their own pass phrase.  Thus the PGP key pair provides both
+authentication and access controls.
+
+When granting or revoking access for a user the master key (root)
+is used to decrypt and reencrypt all the password files.  This master
+key is not acutally special in anyway except being associated with the
+root user.  As the root user can control other user's access B<passmg>
+will only allow root to make use of the program if logged in to a the
+host's physical console.  To prevent users by-passing B<passmg> and
+accessing the various files directly the repository is made accessable
+only to root and the B<passmg> script made suid and sgid.
+
+=head1 OPTIONS
+
+=head2 B<-h>
+
+Will print a brief description of usage and paremeters.
+
+=head2 B<-v>
+
+Will print the version identifier for the program.
+
+=head2 B<-l>
+
+Will list the available encrypted password files.
+
+=head2 B<-C>
+
+Allows a user to change the passphrase on their own secret PGP key.
+
+=head2 B<-a key@host>
+
+Allows a user to add a new password file to the repository.
+
+=head2 B<-c key@host>
+
+Allows a user to change to contents of an encrypted password file.
+
+=head2 B<-d key@host>
+
+Allows a user to delete an existing password file from the repository.
+
+=head2 B<-g user>
+
+Allows root to grant access to the repository to a new user.
+
+=head2 B<-g user>
+
+Allows root to revoke an existing users access to the repository.
+
+=head1 BUGS
+
+There is no locking beyond what is done by gpg itself so there is the potential
+of race conditions of more than one user is manipluating key files.  This might
+give unpredictable results but should not result in corruption of the repository.
+
+=head1 SEE ALSO
+
+gpg(1)
+
+=head1 VERSION
+
+$Id$
+
+=head1 AUTHOR
+
+Matthew Melvin <matthewm@webcentral.com.au>
+
+=cut
 
 # GLOBALS ##################################################################
 
@@ -40,7 +140,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.6 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.7 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
