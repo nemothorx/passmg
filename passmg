@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.17 2003/09/19 00:40:35 matthewm Exp root $
+# $Id: passmg,v 1.18 2003/12/30 01:23:42 root Exp matthewm $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -116,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.17 2003/09/19 00:40:35 matthewm Exp root $
+$Id: passmg,v 1.18 2003/12/30 01:23:42 root Exp matthewm $
 
 =head1 AUTHOR
 
@@ -139,7 +139,7 @@ use POSIX qw(:termios_h);
 use Sys::Syslog;
 use Sys::Syslog qw(:DEFAULT setlogsock);
 
-use vars qw/ @_ARGV $ARGV0 $VER $DEBUG /;
+use vars qw/ @_ARGV $ARGV0 $VER $DEBUG $HIST /;
 
 sub main ();
 sub show_help ();
@@ -169,11 +169,13 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.17 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.18 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
 $DEBUG = 0;
+
+$HIST = 3;
 
 main();
 
@@ -423,6 +425,7 @@ sub main () {
 			print STDERR "Key already exists\n";
 			exit(1);
 		}
+		$buf = "";
 	}
 	if ($opts{c}) {
 		print STDOUT "\nChanging key in file $ARGV[0] ...\n";
@@ -431,14 +434,17 @@ sub main () {
 			print STDERR "Asc doesn't exists\n";
 			exit(1);
 		}
-		unless (decrypt_asc($user, $pass, $ARGV[0])) {
+		unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
 			putlog('notice', "Incomplete: Authoriztion refused");
 			print STDERR "Authoriztion refused\n";
 			exit(1);
 		}
 	}
 	if ($opts{a} || $opts{c}) {
-		$buf = get_passwd("Enter new password", 1);
+		$buf .= get_passwd("Enter new password", 1);
+		if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
+			$buf = $1;
+		};
 		print STDOUT "\nEncrypting asc file $ARGV[0] ...\n";
 		unless (@pub = import_keys()) {
 			putlog('notice', "Incomplete: Key import failed");
