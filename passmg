@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.4 2001/06/12 03:45:20 matthewm Exp $
+# $Id: passmg,v 1.5 2001/06/12 04:19:26 matthewm Exp matthewm $
 
 # GLOBALS ##################################################################
 
@@ -40,7 +40,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.4 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.5 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -248,6 +248,10 @@ sub main () {
 	}
 
 	if ($opts{a}) {
+		unless ($ARGV[0] =~ /^\S+@\S+$/) {
+			print STDERR "Key must be in the form key\@host\n";
+			exit(1);
+		}
 		print STDOUT "\nAdding new key in $ARGV[0] ...\n";
                 if (check_asc($ARGV[0])) {
                         print STDERR "Key already exists\n";
@@ -361,8 +365,6 @@ sub check_key ($) {
 	my($p) = gensym;
 	my($buf, $out);
 
-	print STDERR "Checking key for $usr\n";
-
 	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
 		return(0);
 	}
@@ -401,8 +403,6 @@ sub check_key ($) {
                 print STDERR "Error: key verifing gpg process was killed: $buf\n";
 		return(0);
         }
-
-	print STDERR "Checked key: $out\n";
 
 	return(0) unless ($out);
 
