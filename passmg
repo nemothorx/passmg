@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.7 2001/06/12 05:56:40 matthewm Exp matthewm $
+# $Id: passmg,v 1.8 2001/07/17 01:37:33 matthewm Exp matthewm $
 
 # PERL DOC #################################################################
 
@@ -93,7 +93,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id$
+$Id: passmg,v 1.8 2001/07/17 01:37:33 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -113,6 +113,8 @@ use File::Basename;
 use Getopt::Std;
 use POSIX;
 use POSIX qw(:termios_h);
+use Sys::Syslog;
+use Sys::Syslog qw(:DEFAULT setlogsock);
 
 use vars qw/ $ARGV0 $VER $DEBUG /;
 
@@ -129,6 +131,7 @@ sub list_ascs ();
 sub encrypt_asc ($$@);
 sub decrypt_asc ($$$);
 sub delete_asc ($);
+sub putlog ($$);
 
 $ARGV0 = basename($0);
 $0 = getcwd() . "/$0" unless ($0 =~ /^\//);
@@ -140,7 +143,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.7 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.8 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -153,9 +156,13 @@ die "Unreachable code reached";
 # MAIN BODY ################################################################
 
 sub main () {
-	my(%opts);
+	my(%opts, $args);
 	my($user, $pass, $buf);
 	my(@pub, @asc);
+
+	$args = join(" ", $ARGV0, @ARGV);
+	$args =~ /(.+)/;
+	$args = $1;
 
 	unless (getopts('hvilcCadg:r:', \%opts)) {
 		show_help();
@@ -199,38 +206,49 @@ sub main () {
 	}
 	
 	unless ($buf = ttyname(fileno(0))) {
+		putlog('warning', "Called from non-tty device: $1");
 		print STDERR "Fatal: stdin is not a tty device: $!\n";
 		exit(1);
 	}
 	if (($> == $<) && ($buf !~ /^\/dev\/tty[0-9A-Z]+$/)) {
+		putlog('warning', "Called by owner from non-console: $buf");
 		print STDERR "Fatal: run by owner from non-console: $buf\n";
 		exit(1);
 	}
 
+	putlog('notice', "Started: $>/$< on $buf");
+	putlog('notice', $args);
+
 	unless (umask(077)) {
+		putlog('err',  "Fatal: unable to set umask to 077: $!");
 		print STDERR "Fatal: unable to set umask to 077: $!\n";
 		exit(1);
 	}
 
 	if ($opts{i}) {
 		unless ($> == $<) {
+			putlog('warning', "Attempt to initilise repository by non-owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
 		unless (( -d $ENV{'GNUPGHOME'}) || mkdir($ENV{'GNUPGHOME'}, 777)) {
+			putlog('err',  "Fatal: unable to mkdir for $ENV{'GNUPGHOME'}: $!");
 			print STDERR "Fatal: unable to mkdir for $ENV{'GNUPGHOME'}: $!\n";
 			exit(1);
 		}
 		unless (chdir($ENV{'GNUPGHOME'})) {
+			putlog('err',  "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!");
 			print STDERR "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!\n";
 			exit(1);
 		}
 		if (@pub = import_keys()) {
+			putlog('notice', "Incomplete: Directory already initilised");
 			print STDERR "Directory already initilised\n";
 			exit(1);
 		}
 		print STDOUT "\nCreating key for owner ...\n";
 		unless (($user = getpwuid($<)) && create_key($user)) {
+			putlog('notice', "Incomplete: Key creation failed");
 			print STDERR "Key creation failed\n";
 			exit(1);
 		}
@@ -239,6 +257,7 @@ sub main () {
 	}
 	
 	unless (chdir($ENV{'GNUPGHOME'})) {
+		putlog('err',  "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!");
 		print STDERR "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!\n";
 		exit(1);
 	}
@@ -249,17 +268,20 @@ sub main () {
 		 && (($<, $() = ($>, $)))
 		 && (check_key($user))
 		 && (check_auth($user, $pass))) {
-                print STDERR "Authorization refused.\n";
+		putlog('notice', "Incomplete: Authorization refused.");
+		print STDERR "Authorization refused.\n";
 		exit(1);
 	}
 
 	if ($opts{C}) {
 		print STDOUT "\nChanging key for $user...\n";
 		unless (rename_key($user)) {
+			putlog('notice', "Incomplete: Old key rename failed");
 			print STDERR "Old key rename failed\n";
 			exit(1);
 		}
 		unless (create_key($user)) {
+			putlog('notice', "Incomplete: New key creation failed");
 			print STDERR "New key creation failed\n";
 			exit(1);
 		}
@@ -269,14 +291,17 @@ sub main () {
 	if ($opts{g}) {
 		print STDOUT "\nCreating key for $opts{g} ...\n";
 		unless ($> == $<) {
+			putlog('notice', "Incomplete: Need to be owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
 		if (check_key($opts{g})) {
+			putlog('notice', "Incomplete: Key already exists");
 			print STDERR "Key already exists\n";
 			exit(1);
 		}
 		unless (create_key($opts{g})) {
+			putlog('notice', "Incomplete: Key creation failed");
 			print STDERR "Key creation failed\n";
 			exit(1);
 		}
@@ -285,18 +310,22 @@ sub main () {
 	if ($opts{r}) {
 		print STDOUT "\nRevoking key for $opts{r} ...\n";
 		unless ($> == $<) {
+			putlog('notice', "Incomplete: Need to be owner");
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
 		if ($user eq $opts{r}) {
+			putlog('notice', "Incomplete: Can't delete own key");
 			print STDERR "Can't delete own key\n";
 			exit(1);
 		}
 		unless (check_key($opts{r})) {
+			putlog('notice', "Incomplete: Key doesn't exists");
 			print STDERR "Key doesn't exists\n";
 			exit(1);
 		}
 		unless (delete_key($opts{r})) {
+			putlog('notice', "Incomplete: Key deletion failed");
 			print STDERR "Key deletion failed\n";
 			exit(1);
 		}
@@ -305,25 +334,30 @@ sub main () {
 	if ($opts{g} || $opts{r} || $opts{C}) {
 		print STDOUT "\nRe-encrypting asc files ...\n";
 		unless (@pub = import_keys()) {
+			putlog('notice', "Incomplete: Key import failed");
 			print STDERR "Key import failed\n";
 			exit(1);
 		}
 		unless (@asc = list_ascs()) {
+			putlog('notice', "Incomplete: Key list failed");
 			print STDERR "Key list failed\n";
 			exit(1);
 		}
 		foreach (@asc) {
 			unless ($buf = decrypt_asc($user, $pass, $_)) {
+				putlog('notice', "Incomplete: Asc decryption failed: $_");
 				print STDERR "Asc decryption failed: $_\n";
 				next;
 			}
 			unless (encrypt_asc($buf, $_, @pub)) {
+				putlog('notice', "Incomplete: Asc encryption failed: $_");
 				print STDERR "Asc encryption failed: $_\n";
 			}
 		}
 
 		if ($opts{C}) {
 			unless (delete_key($user)) {
+				putlog('notice', "Incomplete: Old Key deletion failed");
 				print STDERR "Old Key deletion failed\n";
 				exit(1);
 			}
@@ -336,6 +370,7 @@ sub main () {
 	if ($opts{l}) {
 		print STDOUT "\nAvailable keys ...\n";
 		unless (@asc = list_ascs()) {
+			putlog('notice', "Incomplete: Key list failed");
 			print STDERR "Key list failed\n";
 			exit(1);
 		}
@@ -349,22 +384,26 @@ sub main () {
 
 	if ($opts{a}) {
 		unless ($ARGV[0] =~ /^\S+@\S+$/) {
+			putlog('notice', "Incomplete: Key must be in the form key\@host");
 			print STDERR "Key must be in the form key\@host\n";
 			exit(1);
 		}
 		print STDOUT "\nAdding new key in $ARGV[0] ...\n";
-                if (check_asc($ARGV[0])) {
-                        print STDERR "Key already exists\n";
-                        exit(1);
-                }
+		if (check_asc($ARGV[0])) {
+			putlog('notice', "Incomplete: Key already exists");
+			print STDERR "Key already exists\n";
+			exit(1);
+		}
 	}
 	if ($opts{c}) {
 		print STDOUT "\nChanging key in file $ARGV[0] ...\n";
 		unless (check_asc($ARGV[0])) {
+			putlog('notice', "Incomplete: Asc doesn't exists");
 			print STDERR "Asc doesn't exists\n";
 			exit(1);
 		}
 		unless (decrypt_asc($user, $pass, $ARGV[0])) {
+			putlog('notice', "Incomplete: Authoriztion refused");
 			print STDERR "Authoriztion refused\n";
 			exit(1);
 		}
@@ -373,10 +412,12 @@ sub main () {
 		$buf = get_passwd("Enter new password");
 		print STDOUT "\nEncrypting asc file $ARGV[0] ...\n";
 		unless (@pub = import_keys()) {
+			putlog('notice', "Incomplete: Key import failed");
 			print STDERR "Key import failed\n";
 			exit(1);
 		}
 		unless (encrypt_asc($buf, $ARGV[0], @pub)) {
+			putlog('notice', "Incomplete: Asc encryption failed");
 			print STDERR "Asc encryption failed\n";
 			exit(1);
 		}
@@ -387,10 +428,12 @@ sub main () {
 	if ($opts{d}) {
 		print STDOUT "\nDeleting asc file $ARGV[0] ...\n";
 		unless (check_asc($ARGV[0])) {
+			putlog('notice', "Incomplete: Asc doesn't exists");
 			print STDERR "Asc doesn't exists\n";
 			exit(1);
 		}
 		unless (delete_asc($ARGV[0])) {
+			putlog('notice', "Incomplete: Asc deleltion failed");
 			print STDERR "Asc deleltion failed\n";
 			exit(1);
 		}
@@ -400,11 +443,13 @@ sub main () {
 
 	print STDOUT "\nDecrypting asc file $ARGV[0] ...\n";
 	unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
+		putlog('notice', "Incomplete: Asc decryption failed");
 		print STDERR "Asc decryption failed\n";
 		exit(1);
 	}
 	print $buf;
 		
+	putlog('notice', "Completed.");
 	print STDOUT "Done.\n";
 	exit(0);
 }
@@ -469,26 +514,30 @@ sub check_key ($) {
 		return(0);
 	}
 
-        $buf = open($p, "-|");
+	$buf = open($p, "-|");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for key verification: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for key verification: $!");
+		print STDERR "Error: unable to fork gpg for key verification: $!\n";
 		return(0);
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
 			exit(1);
 		}	
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
+		exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
 			'--list-secret-keys', '--no-default-keyring',
 			'--keyring', "$usr.pub", '--secret-keyring', "$usr.sec");
-                print STDERR "Error: unable to exec gpg for key verification: $!\n";
+		putlog('err',  "Error: unable to exec gpg for key verification: $!");
+		print STDERR "Error: unable to exec gpg for key verification: $!\n";
 		exit(1);
-        }
+	}
 	
 	while (<$p>) {
 		chomp();
@@ -498,11 +547,12 @@ sub check_key ($) {
 
 	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: key verifing gpg process was killed: $buf\n";
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: key verifing gpg process was killed: $buf");
+		print STDERR "Error: key verifing gpg process was killed: $buf\n";
 		return(0);
-        }
+	}
 
 	return(0) unless ($out);
 
@@ -519,39 +569,43 @@ sub check_auth ($$) {
 		return(0);
 	}
 
-        $buf = open($p, "|-");
+	$buf = open($p, "|-");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for authenticaton: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for authenticaton: $!");
+		print STDERR "Error: unable to fork gpg for authenticaton: $!\n";
 		return(0);
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, "</dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, "</dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
+		exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
 			'--no-secmem-warning',
 			'--no-tty', '--passphrase-fd', '0',
 			'--no-default-keyring',
 			'--keyring', "$usr.pub",
 			'--secret-keyring', "$usr.sec",
 			'-u', "$usr", '-s', "$usr.sec");
-                print STDERR "Error: unable to exec gpg for authenticaton: $!\n";
+		putlog('err',  "Error: unable to exec gpg for authenticaton: $!\n");
+		print STDERR "Error: unable to exec gpg for authenticaton: $!\n";
 		exit(1);
-        }
+	}
 
 	print $p "$key\n";
 
-        close($p);
+	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: authenticating gpg process was killed: $buf\n";
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: authenticating gpg process was killed: $buf");
+		print STDERR "Error: authenticating gpg process was killed: $buf\n";
 		return(0);
-        }
+	}
 
-        $buf = $? >> 8;
-        return(0) if ($buf != 0);
+	$buf = $? >> 8;
+	return(0) if ($buf != 0);
 
 	return(1);
 }
@@ -562,6 +616,7 @@ sub create_key ($) {
 	my($p) = gensym;
 
 	unless (@pwe = getpwnam($usr)) {
+		putlog('err',  "Error: Can't find details for user $usr: $!");
 		print STDERR "Error: Can't find details for user $usr: $!\n";
 		return(0);
 	}
@@ -570,19 +625,21 @@ sub create_key ($) {
 
 	$key = get_passwd("Enter new password");
 
-        $buf = open($p, "|-");
+	$buf = open($p, "|-");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for key creation: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for key creation: $!");
+		print STDERR "Error: unable to fork gpg for key creation: $!\n";
 		return(0);
-        } elsif ($buf == 0) {
-                exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
+	} elsif ($buf == 0) {
+		exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
 			'--no-default-keyring',
 			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
 			'--batch', '--gen-key', '--yes');
-                print STDERR "Error: unable to exec gpg for key creation: $!\n";
+		putlog('err',  "Error: unable to exec gpg for key creation: $!");
+		print STDERR "Error: unable to exec gpg for key creation: $!\n";
 		exit(1);
-        }
+	}
 
 	print $p "
 		%echo $pwe[6] ($usr) <$usr\@localhost>
@@ -600,19 +657,21 @@ sub create_key ($) {
 		%commit
 		%echo done\n";
 
-        close($p);
+	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: key creation gpg process was killed: $buf\n";
-		return(0);
-        }
-
-        $buf = $? >> 8;
+	$buf = $? & 127;
 	if ($buf != 0) {
-                print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		putlog('err',  "Error: key creation gpg process was killed: $buf");
+		print STDERR "Error: key creation gpg process was killed: $buf\n";
 		return(0);
-        }
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
+		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		return(0);
+	}
 
 	return(1);
 }
@@ -624,11 +683,13 @@ sub delete_key ($) {
 	$usr = $1;
 
 	unless (unlink("$usr.sec")) {
+		putlog('warning',  "Warning: unable to delete key: $usr.sec: $!");
 		print STDERR "Warning: unable to delete key: $usr.sec: $!\n";
 		return(0);
 	}
 
 	unless (unlink("$usr.pub")) {
+		putlog('warning',  "Warning: unable to delete key: $usr.pub: $!");
 		print STDERR "Warning: unable to delete key: $usr.pub: $!\n";
 		return(0);
 	}
@@ -643,11 +704,13 @@ sub rename_key ($) {
 	$usr = $1;
 
 	unless (rename("$usr.sec", "$usr.tmp.sec")) {
+		putlog('err',  "Error: unable to rename key: $usr.sec: $!");
 		print STDERR "Error: unable to rename key: $usr.sec: $!\n";
 		return(0);
 	}
 
 	unless (rename("$usr.pub", "$usr.tmp.pub")) {
+		putlog('err',  "Error: unable to rename key: $usr.pub: $!");
 		print STDERR "Error: unable to rename key: $usr.pub: $!\n";
 		return(0);
 	}
@@ -660,15 +723,18 @@ sub import_keys () {
 	my($buf, @buf, @pub);
 
 	unless (( ! -e 'pubring.gpg')  || unlink('pubring.gpg')) {
+		putlog('err',  "Error: unable to unlink existing pubring.gpg: $!");
 		print STDERR "Error: unable to unlink existing pubring.gpg: $!\n";
 		return(());
 	}
 	unless (( ! -e 'secring.gpg')  || unlink('secring.gpg')) {
+		putlog('err',  "Error: unable to unlink existing secring.gpg: $!");
 		print STDERR "Error: unable to unlink existing secring.gpg: $!\n";
 		return(());
 	}
 	
 	unless (opendir($d, ".")) {
+		putlog('err',  "Error: unable to open dir for reading: $!");
 		print STDERR "Error: unable to open dir for reading: $!\n";
 		return(());
 	}
@@ -683,42 +749,49 @@ sub import_keys () {
 	close($d);	
 
 	unless ($#pub >= 0) {
+		putlog('err',  "Error: no keys to import: *.pub");
 		print STDERR "Error: no keys to import: *.pub\n";
 		return(());
 	}
 
 	$buf = fork();
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for import: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for import: $!");
+		print STDERR "Error: unable to fork gpg for import: $!\n";
 		return(());
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
 			exit(1);
 		}	
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @pub);
-                print STDERR "Error: unable to exec gpg for import: $!\n";
+		exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @pub);
+		putlog('err',  "Error: unable to exec gpg for import: $!");
+		print STDERR "Error: unable to exec gpg for import: $!\n";
 		exit(1);
-        }
+	}
 
 	$buf = waitpid($buf, 0);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: importing gpg process was killed: $buf\n";
-		return(());
-        }
-
-        $buf = $? >> 8;
+	$buf = $? & 127;
 	if ($buf != 0) {
-                print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		putlog('err',  "Error: importing gpg process was killed: $buf");
+		print STDERR "Error: importing gpg process was killed: $buf\n";
 		return(());
-        }
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
+		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		return(());
+	}
 
 	return(@pub);
 }
@@ -728,6 +801,7 @@ sub list_ascs () {
 	my(@asc, @buf);
 
 	unless (opendir($d, ".")) {
+		putlog('err',  "Error: unable to open dir for reading: $!");
 		print STDERR "Error: unable to open dir for reading: $!\n";
 		return(());
 	}
@@ -740,6 +814,7 @@ sub list_ascs () {
 	}
 
 	unless ($#asc >= 0) {
+		putlog('err',  "Error: no keys to list: *@*.asc");
 		print STDERR "Error: no keys to list: *@*.asc\n";
 		return(());
 	}
@@ -760,27 +835,31 @@ sub check_asc ($) {
 		return(undef);
 	}
 
-        $buf = open($p, "-|");
+	$buf = open($p, "-|");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for asc verification: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for asc verification: $!");
+		print STDERR "Error: unable to fork gpg for asc verification: $!\n";
 		return(0);
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
 			exit(1);
 		}	
-                unless (close(STDERR) && open(STDERR, ">&STDOUT")) {
+		unless (close(STDERR) && open(STDERR, ">&STDOUT")) {
+			putlog('err',  "Error: unable to map gpg's stderr to stdout: $!");
 			print STDERR "Error: unable to map gpg's stderr to stdout: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
+		exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
 			'--list-only', '--no-default-keyring',
 			'--keyring', '/dev/null', '--secret-keyring', '/dev/null',
 			$file);
-                print STDERR "Error: unable to exec gpg for asc verification: $!\n";
+		putlog('err',  "Error: unable to exec gpg for asc verification: $!");
+		print STDERR "Error: unable to exec gpg for asc verification: $!\n";
 		exit(1);
-        }
+	}
 	
 	while (<$p>) {
 		chomp();
@@ -790,11 +869,12 @@ sub check_asc ($) {
 
 	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: asc verifing gpg process was killed: $buf\n";
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: asc verifing gpg process was killed: $buf");
+		print STDERR "Error: asc verifing gpg process was killed: $buf\n";
 		return(0);
-        }
+	}
 
 
 	return(0) unless ($out);
@@ -814,42 +894,48 @@ sub encrypt_asc ($$@) {
 	$file .= ".asc" unless ($file =~ /\.asc$/);
 
 	unless (( ! -e $file)  || unlink($file)) {
+		putlog('err',  "Error: unable to unlink existing $file: $!");
 		print STDERR "Error: unable to unlink existing $file: $!\n";
 		return(0);
 	}
 
-        $buf = open($p, "|-");
+	$buf = open($p, "|-");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for encryption: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for encryption: $!");
+		print STDERR "Error: unable to fork gpg for encryption: $!\n";
 		return(0);
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-a', '--encrypt', '--always-trust', 
+		exec {'gpg'} ('gpg', '-a', '--encrypt', '--always-trust', 
 			'--no-secmem-warning',
 			@pub, '-o', $file);
-                print STDERR "Error: unable to exec gpg for encryption: $!\n";
+		putlog('err',  "Error: unable to exec gpg for encryption: $!");
+		print STDERR "Error: unable to exec gpg for encryption: $!\n";
 		exit(1);
-        }
+	}
 
 	print $p "$key\n";
-        
+	
 	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: encrypting gpg process was killed: $buf\n";
-		return(0);
-        }
-
-        $buf = $? >> 8;
+	$buf = $? & 127;
 	if ($buf != 0) {
-                print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		putlog('err',  "Error: encrypting gpg process was killed: $buf");
+		print STDERR "Error: encrypting gpg process was killed: $buf\n";
 		return(0);
-        }
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
+		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		return(0);
+	}
 
 	return(1);
 }
@@ -867,61 +953,69 @@ sub decrypt_asc ($$$) {
 	$file .= ".asc" unless ($file =~ /\.asc$/);
 
 	unless ( -f $file) {
+		putlog('err',  "Error: no key file for $file");
 		print STDERR "Error: no key file for $file\n";
 		return(undef);
 	}
 
 	unless (pipe($r, $w)) {
+		putlog('err',  "Error: unable to create password channel: $!");
 		print STDERR "Error: unable to create password channel: $!\n";
 		return(undef);
 	}
 	unless (fcntl($r, F_GETFD, $buf)) {
+		putlog('err',  "Error: unable to F_GETFD on password channel: $!");
 		print STDERR "Error: unable to F_GETFD on password channel: $!\n";
 	}
 	$buf &= FD_CLOEXEC;
 	unless (fcntl($r, F_SETFD, $buf)) {
+		putlog('err',  "Error: unable to F_SETFD on password channel: $!");
 		print STDERR "Error: unable to F_SETFD on password channel: $!\n";
 	}
 
-        $buf = open($p, "-|");
+	$buf = open($p, "-|");
 
-        unless (defined($buf)) {
-                print STDERR "Error: unable to fork gpg for decryption: $!\n";
+	unless (defined($buf)) {
+		putlog('err',  "Error: unable to fork gpg for decryption: $!");
+		print STDERR "Error: unable to fork gpg for decryption: $!\n";
 		return(undef);
-        } elsif ($buf == 0) {
-                unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
 			exit(1);
 		}	
-                unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-		print STDERR "Reading password from " . fileno($r) . "\n";
-                exec {'gpg'} ('gpg', '--decrypt', 
+		exec {'gpg'} ('gpg', '--decrypt', 
 			'--no-tty', '--passphrase-fd', fileno($r),
 			'--no-secmem-warning', '--no-default-keyring',
 			'--secret-keyring', "$usr.sec",
 			'--keyring', "$usr.pub", '-u', "$usr",
 			"$file");
-                print STDERR "Error: unable to exec gpg for decryption: $!\n";
+		putlog('err',  "Error: unable to exec gpg for decryption: $!");
+		print STDERR "Error: unable to exec gpg for decryption: $!\n";
 		exit(1);
-        }
+	}
 
 	print $w "$key\n";
 	close($w);
 
 	$out = <$p>;
 
-        close($p);
+	close($p);
 
-        $buf = $? & 127;
-        if ($buf != 0) {
-                print STDERR "Error: decrypting gpg process was killed: $buf\n";
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: decrypting gpg process was killed: $buf");
+		print STDERR "Error: decrypting gpg process was killed: $buf\n";
 		return(undef);
-        }
+	}
 
-        $buf = $? >> 8;
+	$buf = $? >> 8;
 	return(undef) if ($buf != 0);
 
 	return($out);
@@ -933,14 +1027,28 @@ sub delete_asc ($) {
 	$file .= ".asc" unless ($file =~ /\.asc$/);
 
 	unless ( -f $file) {
+		putlog('err',  "Error: no asc key for $file");
 		print STDERR "Error: no asc key for $file\n";
 		return(undef);
 	}
 
 	unless (unlink($file)) {
+		putlog('err',  "Warning: unable to asc key: $file: $!");
 		print STDERR "Warning: unable to asc key: $file: $!\n";
 	}
 
 	return(1);
 }
 
+sub putlog ($$) {
+	my($pri) = $_[0];
+	my($msg) = $_[1];
+
+	chomp($msg);
+	$msg =~ s/([\000-\011\013-\037])/sprintf("\\%03o", unpack("C", $1))/eg;
+
+	openlog($ARGV0, 'ndelay,pid', 'authpriv');
+	setlogsock('unix');
+	syslog($pri, "%s", $msg);
+	closelog();
+}
