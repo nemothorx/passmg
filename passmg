@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.2 2001/06/07 11:44:50 matthewm Exp matthewm $
+# $Id: passmg,v 1.4 2001/06/12 03:45:20 matthewm Exp $
 
 # GLOBALS ##################################################################
 
@@ -40,11 +40,11 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.2 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.4 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
-$DEBUG = 1;
+$DEBUG = 0;
 
 main();
 
@@ -98,17 +98,14 @@ sub main () {
 		exit(1);
 	}
 	
-	($<,$>) = ($>,$<);
-	($(,$)) = ($),$();
-
 	unless ($buf = ttyname(fileno(0))) {
 		print STDERR "Fatal: stdin is not a tty device: $!\n";
 		exit(1);
 	}
-#	if (($> == $<) && ($buf !~ /^\/devi\/tty[0-9A-Z]+$/)) {
-#		print STDERR "Fatal: run by owner from non-console: $buf\n";
-#		exit(1);
-#	}
+	if (($> == $<) && ($buf !~ /^\/dev\/tty[0-9A-Z]+$/)) {
+		print STDERR "Fatal: run by owner from non-console: $buf\n";
+		exit(1);
+	}
 
 	unless (umask(077)) {
 		print STDERR "Fatal: unable to set umask to 077: $!\n";
@@ -133,15 +130,14 @@ sub main () {
 			exit(1);
 		}
 		print STDOUT "\nCreating key for owner ...\n";
-		unless (($user = getpwuid($>)) && create_key($user)) {
+		unless (($user = getpwuid($<)) && create_key($user)) {
 			print STDERR "Key creation failed\n";
 			exit(1);
 		}
 		print "\nDone\n";
 		exit(0);
 	}
-		
-
+	
 	unless (chdir($ENV{'GNUPGHOME'})) {
 		print STDERR "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!\n";
 		exit(1);
@@ -149,16 +145,13 @@ sub main () {
 
 	$pass = get_passwd("Enter your password");
 
-	unless (($user = getpwuid($>))
-		 && (($>, $)) = ($<, $())
+	unless (($user = getpwuid($<))
+		 && (($<, $() = ($>, $)))
 		 && (check_key($user))
 		 && (check_auth($user, $pass))) {
                 print STDERR "Authorization refused.\n";
 		exit(1);
 	}
-
-	$> = $<; $) = $(;  # run as owner with out apparent suidness.
-
 
 	if ($opts{C}) {
 		print STDOUT "\nChanging key for $user...\n";
