@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.5 2001/06/12 04:19:26 matthewm Exp matthewm $
+# $Id: passmg,v 1.6 2001/06/12 05:23:41 matthewm Exp matthewm $
 
 # GLOBALS ##################################################################
 
@@ -40,7 +40,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision: 1.5 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.6 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -383,7 +383,7 @@ sub check_key ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-q',
+                exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
 			'--list-secret-keys', '--no-default-keyring',
 			'--keyring', "$usr.pub", '--secret-keyring', "$usr.sec");
                 print STDERR "Error: unable to exec gpg for key verification: $!\n";
@@ -430,6 +430,7 @@ sub check_auth ($$) {
 			exit(1);
 		}	
                 exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
+			'--no-secmem-warning',
 			'--no-tty', '--passphrase-fd', '0',
 			'--no-default-keyring',
 			'--keyring', "$usr.pub",
@@ -475,7 +476,7 @@ sub create_key ($) {
                 print STDERR "Error: unable to fork gpg for key creation: $!\n";
 		return(0);
         } elsif ($buf == 0) {
-                exec {'gpg'} ('gpg', '--no-greeting',
+                exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
 			'--no-default-keyring',
 			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
 			'--batch', '--gen-key', '--yes');
@@ -600,7 +601,7 @@ sub import_keys () {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '--fast-import', @pub);
+                exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @pub);
                 print STDERR "Error: unable to exec gpg for import: $!\n";
 		exit(1);
         }
@@ -673,7 +674,7 @@ sub check_asc ($) {
 			print STDERR "Error: unable to map gpg's stderr to stdout: $!\n";
 			exit(1);
 		}	
-                exec {'gpg'} ('gpg', '-q',
+                exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
 			'--list-only', '--no-default-keyring',
 			'--keyring', '/dev/null', '--secret-keyring', '/dev/null',
 			$file);
@@ -728,6 +729,7 @@ sub encrypt_asc ($$@) {
 			exit(1);
 		}	
                 exec {'gpg'} ('gpg', '-a', '--encrypt', '--always-trust', 
+			'--no-secmem-warning',
 			@pub, '-o', $file);
                 print STDERR "Error: unable to exec gpg for encryption: $!\n";
 		exit(1);
@@ -798,7 +800,7 @@ sub decrypt_asc ($$$) {
 		print STDERR "Reading password from " . fileno($r) . "\n";
                 exec {'gpg'} ('gpg', '--decrypt', 
 			'--no-tty', '--passphrase-fd', fileno($r),
-			'--no-default-keyring',
+			'--no-secmem-warning', '--no-default-keyring',
 			'--secret-keyring', "$usr.sec",
 			'--keyring', "$usr.pub", '-u', "$usr",
 			"$file");
