@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.12 2001/10/02 06:21:40 root Exp matthewm $
+# $Id: passmg,v 1.13 2002/10/22 07:01:10 matthewm Exp matthewm $
 
 # PERL DOC #################################################################
 
@@ -9,7 +9,9 @@ B<passmg> - A utility for managing and accessing stored passwords.
 
 =head1 SYNOPSIS
 
-B<passmg> [-h|-v|-l|-C]
+B<passmg> [-h|-v|-C]
+
+B<passmg> [-l] [regex]
 
 B<passmg> [-c|-a|-d] [key@host]
 
@@ -93,7 +95,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.12 2001/10/02 06:21:40 root Exp matthewm $
+$Id: passmg,v 1.13 2002/10/22 07:01:10 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -146,7 +148,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.12 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.13 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
