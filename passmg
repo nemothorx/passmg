@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.16 2003/09/05 03:05:21 matthewm Exp matthewm $
+# $Id: passmg,v 1.17 2003/09/19 00:40:35 matthewm Exp root $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -116,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.16 2003/09/05 03:05:21 matthewm Exp matthewm $
+$Id: passmg,v 1.17 2003/09/19 00:40:35 matthewm Exp root $
 
 =head1 AUTHOR
 
@@ -169,7 +169,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.16 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.17 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -536,7 +536,7 @@ sub get_passwd ($$) {
 		}
 	}
 
-	$term->setlflag($flags & (ECHO | ECHOK | ICANON));
+	$term->setlflag($flags);
 	$term->setattr(0, TCSANOW);
 
 	return($key);
