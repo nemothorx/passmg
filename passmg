@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.13 2002/10/22 07:01:10 matthewm Exp matthewm $
+# $Id: passmg,v 1.14 2003/02/12 22:21:34 matthewm Exp matthewm $
 
 # PERL DOC #################################################################
 
@@ -95,7 +95,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.13 2002/10/22 07:01:10 matthewm Exp matthewm $
+$Id: passmg,v 1.14 2003/02/12 22:21:34 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -148,7 +148,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.13 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.14 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -799,8 +799,8 @@ sub import_keys () {
 
 	$buf = $? >> 8;
 	if ($buf != 0) {
-		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
-		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		putlog('err',  "Error: importing process returned non-zero: $buf");
+		print STDERR "Error: importing gpg process returned non-zero: $buf\n";
 		return(());
 	}
 
@@ -943,8 +943,8 @@ sub encrypt_asc ($$@) {
 
 	$buf = $? >> 8;
 	if ($buf != 0) {
-		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
-		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		putlog('err',  "Error: encrypting gpg process returned non-zero: $buf");
+		print STDERR "Error: encrypting gpg process returned non-zero: $buf\n";
 		return(0);
 	}
 
