@@ -1,5 +1,21 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.14 2003/02/12 22:21:34 matthewm Exp matthewm $
+# $Id: passmg,v 1.15 2003/05/29 00:19:14 matthewm Exp matthewm $
+
+# Password Manager - (C) WebCentral Pty Ltd 
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 # PERL DOC #################################################################
 
@@ -43,7 +59,8 @@ root user.  As the root user can control other user's access B<passmg>
 will only allow root to make use of the program if logged in to a the
 host's physical console.  To prevent users by-passing B<passmg> and
 accessing the various files directly the repository is made accessable
-only to root and the B<passmg> script made suid and sgid.
+only to root and the B<passmg> script made suid and sgid.  Use of mandatory
+ALC (such as the LIDS patch for Linux) on this directory is also advisable.
 
 =head1 OPTIONS
 
@@ -87,7 +104,11 @@ Allows root to revoke an existing users access to the repository.
 
 There is no locking beyond what is done by gpg itself so there is the potential
 of race conditions of more than one user is manipluating key files.  This might
-give unpredictable results but should not result in corruption of the repository.
+give unpredictable results to users but should not result in corruption of the
+repository.
+
+To date this script has only been tested and used on Linux.  It is entirely
+possible it may not work at all on other platforms.
 
 =head1 SEE ALSO
 
@@ -95,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.14 2003/02/12 22:21:34 matthewm Exp matthewm $
+$Id: passmg,v 1.15 2003/05/29 00:19:14 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -148,7 +169,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.14 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.15 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
