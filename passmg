@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id$
+# $Id: passmg,v 1.1 2001/06/07 05:49:42 matthewm Exp matthewm $
 
 # GLOBALS ##################################################################
 
@@ -39,7 +39,7 @@ $0 =~ /(.+)/;
 $0 = $1;
 
 $VER = do {
-	my @r = (q$Revision$ =~ /\d+/g);
+	my @r = (q$Revision: 1.1 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -177,6 +177,10 @@ sub main () {
 			print STDERR "Need to be owner\n";
 			exit(1);
 		}
+		if ($user eq $opts{r}) {
+			print STDERR "Can't delete own key\n";
+			exit(1);
+		}
 		unless (check_key($opts{r})) {
 			print STDERR "Key doesn't exists\n";
 			exit(1);
@@ -226,16 +230,16 @@ sub main () {
 	}
 
 	if ($opts{a}) {
-		print STDOUT "\nAdding new key $ARGV[0]\n";
+		print STDOUT "\nAdding new key in $ARGV[0] ...\n";
                 if (check_asc($ARGV[0])) {
                         print STDERR "Key already exists\n";
                         exit(1);
                 }
 	}
 	if ($opts{c}) {
-		print STDOUT "\nChanging key for $ARGV[0]\n";
+		print STDOUT "\nChanging key in file $ARGV[0] ...\n";
 		unless (check_asc($ARGV[0])) {
-			print STDERR "Key doesn't exists\n";
+			print STDERR "Asc doesn't exists\n";
 			exit(1);
 		}
 		unless (decrypt_asc($user, $pass, $ARGV[0])) {
@@ -252,6 +256,20 @@ sub main () {
 		}
 		unless (encrypt_asc($buf, $ARGV[0], @pub)) {
 			print STDERR "Asc encryption failed\n";
+			exit(1);
+		}
+		print STDOUT "\nDone.\n";
+		exit(0);
+	}
+
+	if ($opts{d}) {
+		print STDOUT "\nDeleting asc file $ARGV[0] ...\n";
+		unless (check_asc($ARGV[0])) {
+			print STDERR "Asc doesn't exists\n";
+			exit(1);
+		}
+		unless (delete_asc($ARGV[0])) {
+			print STDERR "Asc deleltion failed\n";
 			exit(1);
 		}
 		print STDOUT "\nDone.\n";
@@ -626,7 +644,7 @@ sub check_asc ($) {
 	while (<$p>) {
 		chomp();
 		next unless (/^gpg: encrypted with/);
-		$out .= $1;
+		$out .= $_;
 	}
 
 	close($p);
@@ -636,6 +654,7 @@ sub check_asc ($) {
                 print STDERR "Error: asc verifing gpg process was killed: $buf\n";
 		return(0);
         }
+
 
 	return(0) unless ($out);
 
@@ -767,3 +786,21 @@ sub decrypt_asc ($$$) {
 
 	return($out);
 }
+
+sub delete_asc ($) {
+	my($file) = $_[0];
+
+	$file .= ".asc" unless ($file =~ /\.asc$/);
+
+	unless ( -f $file) {
+		print STDERR "Error: no asc key for $file\n";
+		return(undef);
+	}
+
+	unless (unlink($file)) {
+		print STDERR "Warning: unable to asc key: $file: $!\n";
+	}
+
+	return(1);
+}
+
