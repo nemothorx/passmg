@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.20 2004/07/19 07:05:01 matthewm Exp $
+# $Id: passmg,v 1.21 2005/02/14 03:54:39 root Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -116,7 +116,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.20 2004/07/19 07:05:01 matthewm Exp $
+$Id: passmg,v 1.21 2005/02/14 03:54:39 root Exp $
 
 =head1 AUTHOR
 
@@ -148,7 +148,7 @@ sub check_key ($);
 sub check_auth ($$);
 sub create_key ($);
 sub delete_key ($);
-sub rename_key ($);
+sub change_key ($);
 sub import_keys ();
 sub list_ascs ();
 sub encrypt_asc ($$@);
@@ -169,7 +169,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.20 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.21 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -229,14 +229,20 @@ sub main () {
 		}
 	}
 
-	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV > 1)) {
-		print STDERR "Error: redundant command argument(s) specified.\n";
+	if (($opts{i} || $opts{l} || $opts{g} || $opts{r}) && ($#ARGV >= 0)) {
+		print STDERR "Error: too many command argument(s) specified.\n";
 		show_help();
 		exit(1);
 	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV < 0)) {
 		1; # that's fine - do nothing
+	} elsif ($opts{C} && $#ARGV >= 0) {
+		print STDERR "Error: too many command argument(s) specified.\n";
+		show_help();
+		exit(1);
 	} elsif ($#ARGV > 0) {
-		print STDERR "Error: redundant command argument(s) specified.\n";
+		print STDERR "Error: too many command argument(s) specified.\n";
+		show_help();
+		exit(1);
 	} elsif ($#ARGV < 0) {
 		print STDERR "Error: you must specify a key\@host argument.\n";
 		show_help();
@@ -258,12 +264,12 @@ sub main () {
 		$OWNER=1;
 		if ($buf !~ /^\/dev\/tty[0-9A-Z]+$/) {
 			putlog('warning', "Called by owner from non-console: $buf");
-			print STDERR "Fatal: run by owner from non-console: $buf\n";
-			exit(1);
+			# print STDERR "Fatal: run by owner from non-console: $buf\n";
+			# exit(1);
 		}
 	}
 
-	putlog('notice', "Started: $>/$< on $buf");
+	putlog('notice', "Started: " . scalar getpwuid($>) ."($>)/" . scalar getpwuid($<) . "($<) on $buf");
 	putlog('notice', $args);
 
 	unless (umask(077)) {
@@ -322,18 +328,12 @@ sub main () {
 	}
 
 	if ($opts{C}) {
-		print STDOUT "\nChanging key for $user...\n";
-		unless (rename_key($user)) {
-			putlog('notice', "Incomplete: Old key rename failed");
-			print STDERR "Old key rename failed\n";
-			exit(1);
-		}
-		unless (create_key($user)) {
-			putlog('notice', "Incomplete: New key creation failed");
-			print STDERR "New key creation failed\n";
-			exit(1);
-		}
-		$user .= ".tmp";
+		print STDOUT "\nExecuting interactive GPG to change key for $user...\n";
+		# change_key exec's gpg  so does not return
+		change_key($user);
+		putlog('notice', "Incomplete: key change gpg should not have returned");
+		print STDERR "Key change failed\n";
+		exit(1);
 	}
 		
 	if ($opts{g}) {
@@ -379,7 +379,7 @@ sub main () {
 		}
 	}
 
-	if ($opts{g} || $opts{r} || $opts{C}) {
+	if ($opts{g} || $opts{r}) {
 		print STDOUT "\nRe-encrypting asc files ...\n";
 		unless (@pub = import_keys()) {
 			putlog('notice', "Incomplete: Key import failed");
@@ -403,13 +403,6 @@ sub main () {
 			}
 		}
 
-		if ($opts{C}) {
-			unless (delete_key($user)) {
-				putlog('notice', "Incomplete: Old Key deletion failed");
-				print STDERR "Old Key deletion failed\n";
-				exit(1);
-			}
-		}
 		putlog('notice', "Completed.");
 		print STDOUT "\nDone.\n";
 		exit(0);
@@ -575,6 +568,7 @@ sub check_key ($) {
 	my($buf, $out);
 
 	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
+		putlog('err', "Error: no key rings for verification of $usr.");
 		return(0);
 	}
 
@@ -618,7 +612,10 @@ sub check_key ($) {
 		return(0);
 	}
 
-	return(0) unless ($out);
+	unless ($out) {
+		putlog('err', "Error key verification failed.");
+		return(0);
+	}
 
 	return(1);
 }
@@ -630,6 +627,7 @@ sub check_auth ($$) {
 	my($p) = gensym;
 
 	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
+		putlog('err', "Error: no key rings for authentication of $usr.");
 		return(0);
 	}
 
@@ -669,7 +667,11 @@ sub check_auth ($$) {
 	}
 
 	$buf = $? >> 8;
-	return(0) if ($buf != 0);
+
+	if ($buf != 0) {
+		putlog('err', "Error: gpg authentication failed.");
+		return(0);
+	}
 
 	return(1);
 }
@@ -761,24 +763,18 @@ sub delete_key ($) {
 	return(1);
 }
 
-sub rename_key ($) {
+sub change_key ($) {
 	my($usr) = $_[0];
 
-	$usr =~ /^([\w\.\-]+)$/;
-	$usr = $1;
+	exec {'gpg'} ('gpg', '-q', 
+			'--no-secmem-warning',
+			'--no-default-keyring',
+			'--keyring', "$usr.pub",
+			'--secret-keyring', "$usr.sec",
+			'--edit-key', $usr, 'passwd', 'save', 'quit');
 
-	unless (rename("$usr.sec", "$usr.tmp.sec")) {
-		putlog('err',  "Error: unable to rename key: $usr.sec: $!");
-		print STDERR "Error: unable to rename key: $usr.sec: $!\n";
-		return(0);
-	}
-
-	unless (rename("$usr.pub", "$usr.tmp.pub")) {
-		putlog('err',  "Error: unable to rename key: $usr.pub: $!");
-		print STDERR "Error: unable to rename key: $usr.pub: $!\n";
-		return(0);
-	}
-
+	putlog('err',  "Error: unable to exec gpg for key change: $!");
+	print STDERR "Error: unable to exec gpg for key change: $!\n";
 	return(1);
 }
 
