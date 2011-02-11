@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.21 2005/02/14 03:54:39 root Exp $
+# $Id: passmg,v 1.22 2008/10/21 01:55:23 root Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -30,6 +30,8 @@ B<passmg> [-h|-v|-C]
 B<passmg> [-l] [regex]
 
 B<passmg> [-c|-a|-d] [key@host]
+
+B<passmg> -F [filename]
 
 B<passmg> [-g|-r] [user]
 
@@ -100,6 +102,14 @@ Allows root to grant access to the repository to a new user.
 
 Allows root to revoke an existing users access to the repository.
 
+=head2 B<-F filename>
+
+Allows a user to specify a file containing "key password" pairs, one per line
+to be imported in bulk. Existing key files will be appended to.
+e.g.
+root@bne3-0001 sekr1t
+root@bne3-0002 s3krit
+
 =head1 BUGS
 
 There is no locking beyond what is done by gpg itself so there is the potential
@@ -116,7 +126,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 1.21 2005/02/14 03:54:39 root Exp $
+$Id: passmg,v 1.22 2008/10/21 01:55:23 root Exp $
 
 =head1 AUTHOR
 
@@ -151,6 +161,7 @@ sub delete_key ($);
 sub change_key ($);
 sub import_keys ();
 sub list_ascs ();
+sub check_asc ($);
 sub encrypt_asc ($$@);
 sub decrypt_asc ($$$);
 sub delete_asc ($);
@@ -169,7 +180,7 @@ foreach ($ARGV0, @ARGV) {
 $ARGV0 = basename($_ARGV[0]);
 
 $VER = do {
-	my @r = (q$Revision: 1.21 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.22 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -187,14 +198,15 @@ die "Unreachable code reached";
 
 sub main () {
 	my(%opts, $args);
-	my($user, $pass, $buf);
-	my(@pub, @asc);
+	my($user, $pass, $buf, $keyname, $newpass, $exitval, $inputfile);
+	my(@pub, @asc, @passlist);
+	my($pwfile) = gensym;
 
 	$args = join(" ", $ARGV0, @ARGV);
 	$args =~ /(.+)/;
 	$args = $1;
 
-	unless (getopts('hvicCadl:g:r:H:', \%opts)) {
+	unless (getopts('hvicCadl:g:r:H:F:', \%opts)) {
 		show_help();
 		exit(1);
 	}
@@ -229,11 +241,11 @@ sub main () {
 		}
 	}
 
-	if (($opts{i} || $opts{l} || $opts{g} || $opts{r}) && ($#ARGV >= 0)) {
+	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{F}) && ($#ARGV >= 0)) {
 		print STDERR "Error: too many command argument(s) specified.\n";
 		show_help();
 		exit(1);
-	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C}) && ($#ARGV < 0)) {
+	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C} || $opts{F}) && ($#ARGV < 0)) {
 		1; # that's fine - do nothing
 	} elsif ($opts{C} && $#ARGV >= 0) {
 		print STDERR "Error: too many command argument(s) specified.\n";
@@ -278,6 +290,9 @@ sub main () {
 		exit(1);
 	}
 
+	if ($opts{F}) {
+		$inputfile = ($opts{F} =~ /^\/|^[a-zA-Z]:/) ? $opts{F} : getcwd() . "/$opts{F}";
+	}
 	if ($opts{i}) {
 		unless ($OWNER) {
 			putlog('warning', "Attempt to initilise repository by non-owner");
@@ -425,52 +440,112 @@ sub main () {
 		exit(0);
 	}
 
-	if ($opts{a}) {
-		unless ($ARGV[0] =~ /^\S+@\S+$/) {
-			putlog('notice', "Incomplete: Key must be in the form key\@host");
-			print STDERR "Key must be in the form key\@host\n";
-			exit(1);
-		}
-		print STDOUT "\nAdding new key in $ARGV[0] ...\n";
-		if (check_asc($ARGV[0])) {
-			putlog('notice', "Incomplete: Key already exists");
-			print STDERR "Key already exists\n";
-			exit(1);
-		}
+	if ($opts{a} || $opts{c} || $opts{F}) {
 		$buf = "";
-	}
-	if ($opts{c}) {
-		print STDOUT "\nChanging key in file $ARGV[0] ...\n";
-		unless (check_asc($ARGV[0])) {
-			putlog('notice', "Incomplete: Asc doesn't exists");
-			print STDERR "Asc doesn't exists\n";
-			exit(1);
+		if($opts{F}) {
+			unless (open($pwfile, '<', $inputfile)) {
+				print STDERR "Unable to open password list: $inputfile: $!\n";
+				exit(1);
+			}
+			while(<$pwfile>) { 
+				if(/^[\w@\-\.]+ \w+$/) {
+					push @passlist, $_;
+				} else {
+					putlog('notice', "Invalid input line from $inputfile skipped: $_");
+					print STDERR "Invalid input line from $inputfile skipped: $_";
+					$exitval=1;
+					next;
+				}
+	
+			}
+			if($#passlist < 0) {
+				putlog('notice', "Error: no valid key/password pairs found in $inputfile\n");
+				print STDERR "Error: no valid key/password pairs found in $inputfile\n";
+
+				exit(1);
+			}
+		} else {
+			@passlist = "$ARGV[0]";
 		}
-		unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
-			putlog('notice', "Incomplete: Authoriztion refused");
-			print STDERR "Authoriztion refused\n";
-			exit(1);
-		}
-	}
-	if ($opts{a} || $opts{c}) {
-		$buf .= get_passwd("Enter new password", 1);
-		if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
-			$buf = $1;
-		};
-		print STDOUT "\nEncrypting asc file $ARGV[0] ...\n";
 		unless (@pub = import_keys()) {
 			putlog('notice', "Incomplete: Key import failed");
 			print STDERR "Key import failed\n";
 			exit(1);
 		}
-		unless (encrypt_asc($buf, $ARGV[0], @pub)) {
-			putlog('notice', "Incomplete: Asc encryption failed");
-			print STDERR "Asc encryption failed\n";
-			exit(1);
+		foreach (@passlist) {
+			if($opts{F}) {
+				($keyname, $newpass) = split; 
+			} else {
+				$keyname = $_;
+			}
+			unless ($keyname =~ /^(\S+@\S+)$/) {
+				putlog('notice', "Incomplete: Key must be in the form key\@host, skipping: $keyname");
+				print STDERR "Key must be in the form key\@host, skipping: $keyname\n";
+				$exitval = 1;
+				next;
+			}
+			$keyname = $1;
+			if ($opts{a}) {
+				if (check_asc($keyname)) {
+					putlog('notice', "Incomplete: Key already exists for $keyname");
+					print STDERR "Key already exists for $keyname\n";
+					$exitval = 1;
+					next;
+				} else {
+					print STDOUT "\nAdding new key in $keyname ...\n";
+					$buf = "";
+				}
+			} elsif ($opts{c}) {
+				unless (check_asc($keyname)) {
+					putlog('notice', "Incomplete: Asc for $keyname doesn't exist");
+					print STDERR "Asc for $keyname doesn't exist\n";
+					$exitval = 1;
+					next;
+				}
+				unless ($buf = decrypt_asc($user, $pass, $keyname)) {
+					putlog('notice', "Incomplete: Authoriztion refused for $keyname");
+					print STDERR "Authoriztion refused for $keyname\n";
+					$exitval = 1;
+					next;
+				}
+				print STDOUT "\nChanging key in file $ARGV[0] ...\n";
+			} elsif ($opts{F}) {
+				if (check_asc($keyname)) {
+					unless ($buf = decrypt_asc($user, $pass, $keyname)) {
+						putlog('notice', "Incomplete: Authoriztion refused for $keyname");
+						print STDERR "Authoriztion refused for $keyname\n";
+						$exitval = 1;
+						next;
+					}
+				} else {
+					$buf = "";
+			}
+			}
+			if($opts{F}) {
+				$buf .= "$newpass\n";
+			} else {
+				$buf .= get_passwd("Enter new password", 1);
+			}
+			if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
+				$buf = $1;
+			}
+			print STDOUT "\nEncrypting asc file for $keyname ...\n\n";
+			unless (encrypt_asc($buf, $keyname, @pub)) {
+				putlog('notice', "Incomplete: Asc encryption for $keyname failed");
+				print STDERR "Asc encryption for $keyname failed\n";
+				$exitval = 1;
+				next;
+			}
 		}
-		putlog('notice', "Completed.");
-		print STDOUT "\nDone.\n";
-		exit(0);
+		if ($exitval) {
+			putlog('notice', "Incomplete: Errors encountered, see output");
+			print STDERR "Incomplete: Errors encountered, see output\n";
+			exit(1);
+		} else {
+			putlog('notice', "Completed.");
+			print STDOUT "\nDone.\n";
+			exit(0);
+		}
 	}
 
 	if ($opts{d}) {
@@ -523,6 +598,10 @@ sub show_help () {
 
 		-H <number>:  used with -c to specify the number of past
                        passwords to retain.  Must be 1 or greater.
+
+		-F <filename>: bulk import of \"key password\" pairs from
+		       a file. Adds new or changes existing keyfiles as
+		       appropriate.
 		\n";
 	return();
 }
