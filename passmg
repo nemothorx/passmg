@@ -1,192 +1,81 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 1.22 2008/10/21 01:55:23 root Exp $
-
-# Password Manager - (C) WebCentral Pty Ltd 
-
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-# PERL DOC #################################################################
-
-=head1 NAME
-
-B<passmg> - A utility for managing and accessing stored passwords.
-
-=head1 SYNOPSIS
-
-B<passmg> [-h|-v|-C]
-
-B<passmg> [-l] [regex]
-
-B<passmg> [-c|-a|-d] [key@host]
-
-B<passmg> -F [filename]
-
-B<passmg> [-g|-r] [user]
-
-=head1 DESCRIPTION
-
-B<passmg> is a suid perl script designed to lessen the problems
-of shared/common passwords amongst administators.  Although having
-passwords being used by multiple individuals is itself a risk,
-especially when auditing actions taken with that password, it is
-often an inescapable nessessity.  This problem is further aggrevated by
-a tendency to change shared passwords very infrequently due largly to
-the difficulties involved in diseminating the new passwords to all
-parties in a way that does not itself further compromise it.
-
-B<passmg> addresses this problem by keeping a central repository
-of passwords stored in PGP encrypted files.  Each user who has
-been granted access to the repository has their own PGP secret
-and private key pair.  Each password file is encrypted using all
-the available public keys meaning each user can access the respository
-using their own pass phrase.  Thus the PGP key pair provides both
-authentication and access controls.
-
-When granting or revoking access for a user the master key (root)
-is used to decrypt and reencrypt all the password files.  This master
-key is not acutally special in anyway except being associated with the
-root user.  As the root user can control other user's access B<passmg>
-will only allow root to make use of the program if logged in to a the
-host's physical console.  To prevent users by-passing B<passmg> and
-accessing the various files directly the repository is made accessable
-only to root and the B<passmg> script made suid and sgid.  Use of mandatory
-ALC (such as the LIDS patch for Linux) on this directory is also advisable.
-
-=head1 OPTIONS
-
-=head2 B<-h>
-
-Will print a brief description of usage and paremeters.
-
-=head2 B<-v>
-
-Will print the version identifier for the program.
-
-=head2 B<-l regex>
-
-Will list the available encrypted password files matching the provided regex.
-
-=head2 B<-C>
-
-Allows a user to change the passphrase on their own secret PGP key.
-
-=head2 B<-a key@host>
-
-Allows a user to add a new password file to the repository.
-
-=head2 B<-c key@host>
-
-Allows a user to change to contents of an encrypted password file.
-
-=head2 B<-d key@host>
-
-Allows a user to delete an existing password file from the repository.
-
-=head2 B<-g user>
-
-Allows root to grant access to the repository to a new user.
-
-=head2 B<-g user>
-
-Allows root to revoke an existing users access to the repository.
-
-=head2 B<-F filename>
-
-Allows a user to specify a file containing "key password" pairs, one per line
-to be imported in bulk. Existing key files will be appended to.
-e.g.
-root@bne3-0001 sekr1t
-root@bne3-0002 s3krit
-
-=head1 BUGS
-
-There is no locking beyond what is done by gpg itself so there is the potential
-of race conditions of more than one user is manipluating key files.  This might
-give unpredictable results to users but should not result in corruption of the
-repository.
-
-To date this script has only been tested and used on Linux.  It is entirely
-possible it may not work at all on other platforms.
-
-=head1 SEE ALSO
-
-gpg(1)
-
-=head1 VERSION
-
-$Id: passmg,v 1.22 2008/10/21 01:55:23 root Exp $
-
-=head1 AUTHOR
-
-Matthew Melvin <matthewm@webcentral.com.au>
-
-=cut
+# $Id: perlstub,v 1.6 2001/10/02 06:44:17 matthewm Exp $
 
 # GLOBALS ##################################################################
 
-%ENV = ();
-$ENV{'PATH'} = "/usr/local/bin:/usr/bin:/bin";
-$ENV{'GNUPGHOME'} = "/usr/local/passmg";
-
 use strict;
-use Symbol;
+
+use Getopt::Long;
 use File::Basename;
-use Getopt::Std;
+use English;
+use DBI;
 use POSIX;
-use POSIX qw(:termios_h);
 use Sys::Syslog;
-use Sys::Syslog qw(:DEFAULT setlogsock);
+use File::Temp qw/ tempdir /;
+use Data::Dumper;
+use Digest::MD5 qw/ md5_hex /;
 
-use vars qw/ @_ARGV $ARGV0 $VER $DEBUG $HIST $OWNER /;
+use vars qw/ $VER $ARGV0 $DEBUG $TERM /;
+use vars qw/ $DBHOST $DBNAME $DBUSER $DBPASS $DBHAND /;
+use vars qw/ $CFGFILE $TEMPDIR $OWNER $HIST /;
 
-sub main ();
-sub show_help ();
-sub get_passwd ($$);
-sub check_key ($);
-sub check_auth ($$);
-sub create_key ($);
-sub delete_key ($);
-sub change_key ($);
-sub import_keys ();
-sub list_ascs ();
-sub check_asc ($);
-sub encrypt_asc ($$@);
-sub decrypt_asc ($$$);
-sub delete_asc ($);
-sub putlog ($$);
+$TERM = $ENV{'TERM'};
+%ENV = ();
+$ENV{'PATH'} = "/usr/bin:/bin";
+$ENV{'TERM'} = $TERM;
 
-$ARGV0 = ($0 =~ /^\/|^[a-zA-Z]:/) ? $0 : getcwd() . "/$0";
-$ARGV0 =~ s%\\%/%g;
-1 while ($ARGV0 =~ s%/\./%/%);
-1 while ($ARGV0 =~ s%/[^/]+/\.\./%/%);
-1 while ($ARGV0 =~ s%^/\.\./%/%);
-foreach ($ARGV0, @ARGV) {
-        s%/+%/%g;
-        /(.+)/;
-        push(@_ARGV, $1)
-}
-$ARGV0 = basename($_ARGV[0]);
+
+sub main();
+sub bail($);
+sub show_help();
+sub putlog($$);
+sub connect_db($$$$);
+sub get_passwd($$);
+sub read_config($);
+sub check_keys($);
+sub delete_keys($);
+sub fetch_keys($);
+sub save_keys($);
+sub create_keys($);
+sub check_auth($$);
+sub show_user($);
+sub list_users($);
+sub check_group($);
+sub create_group($);
+sub cleanup_group($);
+sub add_to_group($$);
+sub rem_from_group($$);
+sub delete_group($);
+sub show_group($);
+sub list_groups($);
+sub add_to_asc($$);
+sub rem_from_asc($$);
+sub check_asc($);
+sub fetch_ascs($);
+sub encrypt_asc($$$$);
+sub decrypt_asc($$$);
+sub import_keys($);
+sub fetch_asc($);
+sub save_asc($);
+sub delete_asc($);
+sub list_keys($);
 
 $VER = do {
-	my @r = (q$Revision: 1.22 $ =~ /\d+/g);
+	my @r = (q$Revision: 1.6 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
-$DEBUG = 0;
+$ARGV0 = basename($0);
+$ARGV0 =~ /(.+)/;
+$ARGV0 = $1;
 
-$HIST = 3;
+$DBHOST = 'localhost';
+$DBNAME = 'passmg';
+$DBUSER = 'passmg';
+$DBPASS = 'XXXXXXXXXXXX';
+$DBHAND = undef;
+
+$CFGFILE = undef;
 
 $OWNER = 0;
 
@@ -197,413 +86,1002 @@ die "Unreachable code reached";
 # MAIN BODY ################################################################
 
 sub main () {
-	my(%opts, $args);
-	my($user, $pass, $buf, $keyname, $newpass, $exitval, $inputfile);
-	my(@pub, @asc, @passlist);
-	my($pwfile) = gensym;
+	my(%opts, $tty, $args);
+	my($pass, $user, $file);
+	my($buf, $ret, $mod, $grp);
+	my(%before, %after);
 
-	$args = join(" ", $ARGV0, @ARGV);
+	# save arguments before getops works on them
+	$args = join(" ", $0, @ARGV);
 	$args =~ /(.+)/;
 	$args = $1;
 
-	unless (getopts('hvicCadl:g:r:H:F:', \%opts)) {
+	Getopt::Long::Configure ("bundling");
+	unless(Getopt::Long::GetOptions(
+		"v|version" =>\$opts{'v'},
+		"h|help" => \$opts{'h'},
+		"d|debug" => \$opts{'d'},
+		"D|no-debug" => \$opts{'D'},
+		"c|config:s" => \$opts{'c'},
+		"H|history:i" => \$opts{'H'},
+		"F|filename:s" => \$opts{'F'},
+		"initialise" => \$opts{'initialise'},
+		# --initialise
+		"create-user:s" => \$opts{'create-user'},
+		# --create-user <name>
+		"delete-user:s"=> \$opts{'delete-user'},
+		# --delete-user <name>
+		"show-user:s" => \$opts{'show-user'},
+		# --show-user <name>
+		"list-users" => \$opts{'list-users'},
+		# --list-users [regex]
+		"create-group:s" => \$opts{'create-group'},
+		#--create-group <name> [member1][,member2]...
+		"delete-group:s" => \$opts{'delete-group'},
+		#--delete-group <name>
+		"show-group:s" => \$opts{'show-group'},
+		#--show-group [name]
+		"list-groups" => \$opts{'list-groups'},
+		#--list-groups [regex]
+		"add-grp-access:s" => \$opts{'add-grp-access'},
+		#--add-grp-access <name> <member1>[,member2]...
+		"rem-grp-access:s" => \$opts{'rem-grp-access'},
+		#--rem-grp-access <name> <member1>[,member2]...
+		"create-key:s" => \$opts{'create-key'},
+		#--create-key <name> [[-]<user1|group1>][[-]<user2|group2>]...
+		"delete-key:s" => \$opts{'delete-key'},
+		#--delete-key <name>
+		"change-key:s" => \$opts{'change-key'},
+		#--change-key <name>
+		"list-keys" => \$opts{'list-keys'},
+		#--list-keys [regex]
+		"show-key:s" => \$opts{'show-key'},
+		#--show-key <name>
+		#--add-key-access <name> <+|-><user1|group1>[,<+|-><user2|group2>]...
+		"add-key-access:s" => \$opts{'add-key-access'},
+		#--rem-key-access <name> <user1|group1>[,<user2|group2>]...
+		"rem-key-access:s" => \$opts{'rem-key-access'},
+		#--change-pass
+		"change-pass" => \$opts{'change-pass'},
+	)) {
 		show_help();
-		exit(1);
+		bail(1);
 	}
 
-	if (defined($opts{H}) && (scalar keys %opts > 2) || (!defined($opts{H}) && scalar keys %opts > 1)) {
-		print STDERR "Error: only one function may be specified at once.\n";
+	if (($opts{'D'}) && ($opts{'d'})) {
+		print STDERR "Conflicting debug options provided.  Both -D and -d specified.\n";
+        	show_help();
+                bail(1);
+        }
+        $DEBUG = 1 if ($opts{'d'});
+        $DEBUG = 0 if ($opts{'D'});
+
+	if ($opts{'h'}) {
 		show_help();
-		exit(1);
+		bail(0);
 	}
 
-	if ($opts{h}) {
-		show_help();
-		exit(0);
-	}
-
-	if ($opts{v}) {
+	if ($opts{'v'}) {
 		print STDOUT "$ARGV0 version $VER\n";
-		exit(0);
+		bail(0);
 	}
 
-	if (defined($opts{H})) {
-		unless (($opts{H} > 0) && ($opts{H} =~ /^(\d+)$/)) {
-			print STDERR "Error: invalid history option specified.\n";
-			show_help();
-			exit(1);
+        unless ($tty = ttyname(fileno(0))) {
+		$ret = $!;
+                putlog('warning', "Called from non-tty device: $ret");
+                print STDERR "Fatal: stdin is not a tty device: $ret\n";
+                bail(1);
+        }
+
+
+        if (defined($opts{'H'})) {
+                unless (($opts{'H'} > 0) && ($opts{'H'} =~ /^(\d+)$/)) {
+                        print STDERR "Error: invalid history option specified.\n";
+                        show_help();
+                        bail(1);
+                }
+                $HIST = $1;
+                unless ($opts{'c'}) {
+                        print STDERR "Error: history only valid when changing keys.\n";
+                        show_help();
+                        bail(1);
+                }
+        }
+
+	# we're going to change working dir, so make the file absolute if it's not already
+        if ($opts{'F'}) {
+                $file = ($opts{'F'} =~ /^\/|^[a-zA-Z]:/) ? $opts{'F'} : getcwd() . "/" . $opts{'F'};
+        }
+
+	# only one long option allowed at a time
+	if ((scalar grep { /../ && defined($opts{$_}) } keys %opts) > 1) {
+		print STDERR "Error: only one function may be specified at once.\n";
+                show_help();
+                bail(1);
+        }
+
+        putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
+        putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
+
+	$OWNER = 1 if ($EUID == $UID);
+
+	if ($opts{'c'}) {
+		# drop prives before reading user specified config file
+		($EUID, $EGID) = ($UID, $GID);
+		unless (($EUID == $UID) && ($EGID == $GID)) {
+			$ret = $!;
+			putlog('debug', "Dropping privleges before config read failed: $EUID/$EGID <=> $UID/$GID: $ret");
+			print STDERR "Fatal: dropping elevated privledges failed: $ret\n";
+			bail(1);
 		}
-		$HIST = $1;
-		unless ($opts{c}) {
-			print STDERR "Error: history only valid when changing keys.\n";
-			show_help();
-			exit(1);
-		}
+		putlog('debug', "Dropping privledges to read user config: " . getpwuid($EUID) . "/" . getgrgid($EGID));
+		$CFGFILE = $opts{'c'};
+		$CFGFILE =~ /(.+)/;
+		$CFGFILE = $1;
 	}
 
-	if (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{F}) && ($#ARGV >= 0)) {
-		print STDERR "Error: too many command argument(s) specified.\n";
-		show_help();
-		exit(1);
-	} elsif (($opts{i} || $opts{l} || $opts{g} || $opts{r} || $opts{C} || $opts{F}) && ($#ARGV < 0)) {
-		1; # that's fine - do nothing
-	} elsif ($opts{C} && $#ARGV >= 0) {
-		print STDERR "Error: too many command argument(s) specified.\n";
-		show_help();
-		exit(1);
-	} elsif ($#ARGV > 0) {
-		print STDERR "Error: too many command argument(s) specified.\n";
-		show_help();
-		exit(1);
-	} elsif ($#ARGV < 0) {
-		print STDERR "Error: you must specify a key\@host argument.\n";
-		show_help();
-		exit(1);
-	} elsif ($ARGV[0] =~ /^([\w@\-\.]+)$/) {
-		$ARGV[0] = $1;
-	} else {
-		$ARGV[0] =~ s/[\w@\-\.]+//g;
-		print STDERR "Error: bogus characters in argument: '$ARGV[0]'\n";
-		exit(1);
-	}
-	
-	unless ($buf = ttyname(fileno(0))) {
-		putlog('warning', "Called from non-tty device: $1");
-		print STDERR "Fatal: stdin is not a tty device: $!\n";
-		exit(1);
-	}
-	if ($> == $<) {
-		$OWNER=1;
-		if ($buf !~ /^\/dev\/tty[0-9A-Z]+$/) {
-			putlog('warning', "Called by owner from non-console: $buf");
-			# print STDERR "Fatal: run by owner from non-console: $buf\n";
-			# exit(1);
-		}
+	unless(read_config($CFGFILE)) {
+		print STDERR "Fatal: unable to load the config file.\n";
+		bail(1);
 	}
 
-	putlog('notice', "Started: " . scalar getpwuid($>) ."($>)/" . scalar getpwuid($<) . "($<) on $buf");
-	putlog('notice', $args);
+	# if we still have privleges (ie, we're using the sysytem config) then drop them now
+	unless (($EUID == $UID) && ($EGID == $GID)) {
+		($EUID, $EGID) = ($UID, $GID);
+		unless (($EUID == $UID) && ($EGID == $GID)) {
+			$ret = $!;
+			putlog('debug', "Dropping privleges after config read failed: $EUID/$EGID <=> $UID/$GID: $ret");
+			print STDERR "Fatal: dropping elevated privledges failed: $ret\n";
+			bail(1);
+		}
+		putlog('debug', "Dropping privledges after reading config file: " . getpwuid($EUID) . "/" . getgrgid($EGID));
+	}
+
+	putlog('debug', "Running as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
+
+	# setup signal handlers to do a clean exit
+	foreach ('HUP', 'INT', 'QUIT', 'TERM') {
+		$SIG{$_} = sub {
+			print STDERR "Aborting: trapped signal $_[0]\n";
+			bail(1);
+		}
+	}
 
 	unless (umask(077)) {
-		putlog('err',  "Fatal: unable to set umask to 077: $!");
-		print STDERR "Fatal: unable to set umask to 077: $!\n";
-		exit(1);
+		$ret = $!;
+		putlog('err',  "Fatal: unable to set umask to 077: $ret");
+		print STDERR "Fatal: unable to set umask to 077: $ret\n";
+		bail(1);
 	}
 
-	if ($opts{F}) {
-		$inputfile = ($opts{F} =~ /^\/|^[a-zA-Z]:/) ? $opts{F} : getcwd() . "/$opts{F}";
+	eval { $TEMPDIR = tempdir("$ARGV0.XXXXXX", DIR => "/var/tmp/" ); };
+	if (($@ ne "") || (!defined($TEMPDIR))) {
+		$ret = $@;
+		putlog('err', "Error creating temporary directory: $ret");
+		print STDERR "Fatal: unable to create temporary directory: $ret\n";
+		bail(1);
 	}
-	if ($opts{i}) {
+
+	putlog('debug', "Created temporary working directory: $TEMPDIR");
+	$ENV{'GNUPGHOME'} = "$TEMPDIR";
+	
+        unless (chdir($TEMPDIR)) {
+		$ret = $!;
+                putlog('err',  "Error switching to temporary directory: $TEMPDIR: $ret");
+                print STDERR "Fatal: unable to chdir to $TEMPDIR: $ret\n";
+                bail(1);
+        }
+	
+	unless ($DBHAND = connect_db($DBNAME, $DBHOST, $DBUSER, $DBPASS)) {
+		print STDERR "Fatal: unable to open database connection.\n";
+		bail(1);
+	}
+
+	# if we're initalising, there are no passwords, so do this first
+	if ($opts{'initialise'}) {
 		unless ($OWNER) {
 			putlog('warning', "Attempt to initilise repository by non-owner");
-			print STDERR "Need to be owner\n";
-			exit(1);
+			print STDERR "Fatal: only the script owner can run --initilise\n";
+			bail(1);
 		}
-		unless (( -d $ENV{'GNUPGHOME'}) || mkdir($ENV{'GNUPGHOME'}, 777)) {
-			putlog('err',  "Fatal: unable to mkdir for $ENV{'GNUPGHOME'}: $!");
-			print STDERR "Fatal: unable to mkdir for $ENV{'GNUPGHOME'}: $!\n";
-			exit(1);
+		unless ($user = getpwuid($UID)) {
+			$ret = $!;
+			putlog('err', "Unable to determine username for $UID: $ret\n");
+			print STDERR "Fatal: unable to map uid $UID to a username: $ret\n";
+			bail(1);
 		}
-		unless (chdir($ENV{'GNUPGHOME'})) {
-			putlog('err',  "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!");
-			print STDERR "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!\n";
-			exit(1);
+
+		if (check_keys($user)) {
+			putlog('err', "Attempted to initialise but owner keys already exist.");
+			print STDERR "Already initilised.\n";
+			bail(1);
 		}
-		if (@pub = import_keys()) {
-			putlog('notice', "Incomplete: Directory already initilised");
-			print STDERR "Directory already initilised\n";
-			exit(1);
+
+		unless (create_keys($user)) {
+			putlog('err', "Error while creating the initial owner key pair.");
+			print STDERR "Initlialization failed.\n";
+			bail(1);
 		}
-		print STDOUT "\nCreating key for owner ...\n";
-		unless (($user = getpwuid($<)) && create_key($user)) {
-			putlog('notice', "Incomplete: Key creation failed");
-			print STDERR "Key creation failed\n";
-			exit(1);
-		}
-		putlog('notice', "Completed.");
-		print "\nDone\n";
-		exit(0);
-	}
-	
-	unless (chdir($ENV{'GNUPGHOME'})) {
-		putlog('err',  "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!");
-		print STDERR "Fatal: unable to chdir to $ENV{'GNUPGHOME'}: $!\n";
-		exit(1);
+
+		putlog('notice', "Initial owner key pair successfully initialised.");
+		print STDOUT "Database initialised.\n";
+		bail(0);
 	}
 
+	# all other functions reqire authorization of the calling user
 	$pass = get_passwd("Enter your password", 0);
-
-	unless (($user = getpwuid($<))
-		 && (($<, $() = ($>, $)))
-		 && (check_key($user))
+	unless (($user = getpwuid($UID))
+		 && (check_keys($user))
 		 && (check_auth($user, $pass))) {
 		putlog('notice', "Incomplete: Authorization refused.");
 		print STDERR "Authorization refused.\n";
-		exit(1);
+		bail(1);
 	}
 
-	if ($opts{C}) {
-		print STDOUT "\nExecuting interactive GPG to change key for $user...\n";
-		# change_key exec's gpg  so does not return
-		change_key($user);
-		putlog('notice', "Incomplete: key change gpg should not have returned");
-		print STDERR "Key change failed\n";
-		exit(1);
-	}
+	if ($opts{'create-user'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to create a user by non-owner");
+			print STDERR "Fatal: only the script owner can run --create-user\n";
+			bail(1);
+		}
+
+		if (check_keys($opts{'create-user'})) {
+			putlog('err', "Attempted to create user " . $opts{'create-user'} . " but keys already exist.");
+			print STDERR "Fatal: keys for " . $opts{'create-user'} . " already exist.\n";
+			bail(1);
+		}
+
+		unless (create_keys($opts{'create-user'})) {
+			putlog('err', "Error while creating the user key pair for " . $opts{'create-user'} . ".");
+			print STDERR "User creation failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "User key for " . $opts{'create-user'} . " pair successfully created.");
+		print STDOUT "User " . $opts{'create-user'} . " created.\n";
+		bail(0);
+	} elsif ($opts{'delete-user'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to delete a user by non-owner");
+			print STDERR "Fatal: only the script owner can run --delete-user\n";
+			bail(1);
+		}
+
+		if ($user eq $opts{'delete-user'}) {
+			putlog('warning', "Attempt by $user to delete themselves.");
+			print STDERR "Fatal: unable to delete own keys.\n";
+			bail(1);
+		}
+
+		unless (check_keys($opts{'delete-user'})) {
+			putlog('err', "Attempted to delete user " . $opts{'delete-user'} . " but keys don't exist.");
+			print STDERR "Fatal: keys for " . $opts{'delete-user'} . " don't exist.\n";
+			bail(1);
+		}
+
+		unless (delete_keys($opts{'delete-user'})) {
+			putlog('err', "Error while deleting the user key pair for " . $opts{'delete-user'} . ".");
+			print STDERR "User deletion failed.\n";
+			bail(1);
+		}
+
+		foreach (get_user_access($opts{'delete-user'})) {	
+			$before{$_} = 1;
+		}
+
+		unless (cleanup_user($opts{'delete-user'})) {
+			putlog('err', "Error while cleaning up refences to user " . $opts{'delete-user'} . ".");
+			print STDERR "User cleanup failed.\n";
+			bail(1);
+		}
+			
 		
-	if ($opts{g}) {
-		print STDOUT "\nCreating key for $opts{g} ...\n";
-		unless ($OWNER) {
-			putlog('warning', "Attempt to grant access to $opts{g} by non-owner");
-			print STDERR "Need to be owner\n";
-			exit(1);
-		}
-		if (check_key($opts{g})) {
-			putlog('notice', "Incomplete: Key already exists");
-			print STDERR "Key already exists\n";
-			exit(1);
-		}
-		unless (create_key($opts{g})) {
-			putlog('notice', "Incomplete: Key creation failed");
-			print STDERR "Key creation failed\n";
-			exit(1);
-		}
-	}
-
-	if ($opts{r}) {
-		print STDOUT "\nRevoking key for $opts{r} ...\n";
-		unless ($OWNER) {
-			putlog('warning', "Attempt to revoke access from $opts{r} by non-owner");
-			print STDERR "Need to be owner\n";
-			exit(1);
-		}
-		if ($user eq $opts{r}) {
-			putlog('notice', "Incomplete: Can't delete own key");
-			print STDERR "Can't delete own key\n";
-			exit(1);
-		}
-		unless (check_key($opts{r})) {
-			putlog('notice', "Incomplete: Key doesn't exists");
-			print STDERR "Key doesn't exists\n";
-			exit(1);
-		}
-		unless (delete_key($opts{r})) {
-			putlog('notice', "Incomplete: Key deletion failed");
-			print STDERR "Key deletion failed\n";
-			exit(1);
-		}
-	}
-
-	if ($opts{g} || $opts{r}) {
-		print STDOUT "\nRe-encrypting asc files ...\n";
-		unless (@pub = import_keys()) {
-			putlog('notice', "Incomplete: Key import failed");
-			print STDERR "Key import failed\n";
-			exit(1);
-		}
-		unless (@asc = list_ascs()) {
-			putlog('notice', "Incomplete: Key list failed");
-			print STDERR "Key list failed\n";
-			exit(1);
-		}
-		foreach (@asc) {
-			unless ($buf = decrypt_asc($user, $pass, $_)) {
-				putlog('notice', "Incomplete: Asc decryption failed: $_");
-				print STDERR "Asc decryption failed: $_\n";
-				next;
-			}
-			unless (encrypt_asc($buf, $_, @pub)) {
-				putlog('notice', "Incomplete: Asc encryption failed: $_");
-				print STDERR "Asc encryption failed: $_\n";
+		$ret = 0;
+		foreach (keys(%before)) {
+			putlog('debug', "Accesss for " . $opts{'delete-user'} . " to $_ has changed.  Re-encrypting...");
+			unless (encrypt_asc($_, $user, $pass, "")) {
+				putlog('err', "Error while updating the key $_.");
+				print STDERR "Update of $_ failed.\n";
+				$ret = 1;
 			}
 		}
 
-		putlog('notice', "Completed.");
-		print STDOUT "\nDone.\n";
-		exit(0);
-	}
-
-	if ($opts{l}) {
-		print STDOUT "\nAvailable keys ...\n";
-		unless (@asc = list_ascs()) {
-			putlog('notice', "Incomplete: Key list failed");
-			print STDERR "Key list failed\n";
-			exit(1);
+		putlog('notice', "User key for " . $opts{'delete-user'} . " pair successfully deleted.");
+		print STDOUT "User " . $opts{'delete-user'} . " deleted.\n";
+		bail(0);
+	} elsif ($opts{'show-user'}) {
+		unless (check_keys($opts{'show-user'})) {
+			putlog('err', "Attempted to display user " . $opts{'show-user'} . " but keys don't exist.");
+			print STDERR "Fatal: keys for " . $opts{'show-user'} . " don't exist.\n";
+			bail(1);
 		}
-		foreach (@asc) {
-			s/\.asc$//;
-			next unless (/$opts{l}/);
-			print "$_\n";
+
+		unless (show_user($opts{'show-user'})) {
+			putlog('err', "Error while display details for " . $opts{'show-user'} . ".");
+			print STDERR "User display failed.\n";
+			bail(1);
 		}
-		putlog('notice', "Completed.");
-		print STDOUT "\nDone.\n";
-		exit(0);
-	}
 
-	if ($opts{a} || $opts{c} || $opts{F}) {
-		$buf = "";
-		if($opts{F}) {
-			unless (open($pwfile, '<', $inputfile)) {
-				print STDERR "Unable to open password list: $inputfile: $!\n";
-				exit(1);
-			}
-			while(<$pwfile>) { 
-				if(/^[\w@\-\.]+ \w+$/) {
-					push @passlist, $_;
-				} else {
-					putlog('notice', "Invalid input line from $inputfile skipped: $_");
-					print STDERR "Invalid input line from $inputfile skipped: $_";
-					$exitval=1;
-					next;
-				}
-	
-			}
-			if($#passlist < 0) {
-				putlog('notice', "Error: no valid key/password pairs found in $inputfile\n");
-				print STDERR "Error: no valid key/password pairs found in $inputfile\n";
-
-				exit(1);
-			}
+		putlog('notice', "User details for " . $opts{'show-user'} . " successfully displayed.");
+		bail(0);
+	} elsif ($opts{'list-users'}) {
+		if (defined($ARGV[0])) {
+			$opts{'list-users'} = $ARGV[0];
 		} else {
-			@passlist = "$ARGV[0]";
+			$opts{'list-users'} = '.';
 		}
-		unless (@pub = import_keys()) {
-			putlog('notice', "Incomplete: Key import failed");
-			print STDERR "Key import failed\n";
-			exit(1);
+
+		unless (list_users($opts{'list-users'})) {
+			putlog('err', "Error while listing users matching pattern: " . $opts{'list-users'});
+			print STDERR "User listing failed.\n";
+			bail(1);
 		}
-		foreach (@passlist) {
-			if($opts{F}) {
-				($keyname, $newpass) = split; 
-			} else {
-				$keyname = $_;
+
+		putlog('notice', "Successfully listed users matching pattern: " . $opts{'list-users'});
+		bail(0);
+	} elsif ($opts{'change-pass'}) {
+		if (defined($ARGV[0])) {
+			unless ($OWNER) {
+				putlog('warning', "Attempt to change another user's password  by non-owner");
+				print STDERR "Fatal: only the script owner can run --change-pass for other users.\n";
+				bail(1);
 			}
-			unless ($keyname =~ /^(\S+@\S+)$/) {
-				putlog('notice', "Incomplete: Key must be in the form key\@host, skipping: $keyname");
-				print STDERR "Key must be in the form key\@host, skipping: $keyname\n";
-				$exitval = 1;
+			$buf = $ARGV[0];
+			putlog('debug', "Resetting password for $buf by deleting and re-creating keys...");
+			unless (delete_keys($buf)) {
+				putlog('err', "Error while deleting the user key pair for $buf.");
+				print STDERR "Password change failed.\n";
+				bail(1);
+			}
+			unless (create_keys($buf)) {
+				putlog('err', "Error while creating the user key pair for $buf.");
+				print STDERR "Password change failed.\n";
+				bail(1);
+			}
+			foreach (get_user_access($buf)) {	
+				putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
+				unless (encrypt_asc($_, $user, $pass, "")) {
+					putlog('err', "Error while updating the key $_.");
+					print STDERR "Update of $_ failed.\n";
+					$ret = 1;
+				}
+			}
+			bail(1) if ($ret);
+		} else {
+			unless (change_key($user)) {
+				putlog('err', "Error while changing the password for " . change_key($user) . ".");
+				print STDERR "Password change failed.\n";
+				bail(1);
+			}
+		}
+
+		putlog('notice', "Successfully changed the password for $buf");
+		bail(0);
+	} elsif ($opts{'create-group'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to create a group by non-owner");
+			print STDERR "Fatal: only the script owner can run --create-group\n";
+			bail(1);
+		}
+
+		if (check_group($opts{'create-group'})) {
+			putlog('err', "Attempted to create group " . $opts{'create-group'} . " but it already exist.");
+			print STDERR "Fatal: group " . $opts{'create-group'} . " already exist.\n";
+			bail(1);
+		}
+
+		unless (cleanup_group($opts{'create-group'})) {
+			putlog('err', "Error while clearing existing membership list of " . $opts{'create-group'} . ".");
+			print STDERR "Fatal: membership of " . $opts{'create-group'} . " not cleared.\n";
+			bail(1);
+		}
+
+		unless (create_group($opts{'create-group'})) {
+			putlog('err', "Error while creating the group " . $opts{'create-group'} . ".");
+			print STDERR "Group creation failed.\n";
+			bail(1);
+		}
+
+		if (defined($ARGV[0])) {
+			$ret = 0;
+			foreach $buf (split/,/, $ARGV[0]) {
+				unless (check_keys($buf)) {
+					putlog('err', "Attempted to add user $buf to group " . $opts{'create-group'} . " but keys don't exist.");
+					print STDERR "Error: keys for $buf don't exist.\n";
+					$ret = 1;
+					next;
+				}
+				unless(add_to_group($opts{'create-group'}, $buf)) {
+					putlog('err', "Error while setting up initial member of " . $opts{'create-group'} . ": $buf");
+					print STDERR "Error: unable to add $buf to group.\n";
+					$ret = 1;
+				}
+			}
+			bail(1) if ($ret);
+		}
+
+		putlog('notice', "Group " . $opts{'create-group'} . " successfully created.");
+		print STDOUT "Group " . $opts{'create-group'} . " created.\n";
+		bail(0);
+	} elsif ($opts{'delete-group'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to create a group by non-owner");
+			print STDERR "Fatal: only the script owner can run --delete-group\n";
+			bail(1);
+		}
+
+		unless (check_group($opts{'delete-group'})) {
+			putlog('err', "Attempted to delete group " . $opts{'delete-group'} . " but it doesn't exist.");
+			print STDERR "Fatal: group " . $opts{'delete-group'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless (delete_group($opts{'delete-group'})) {
+			putlog('err', "Error while creating the group " . $opts{'delete-group'} . ".");
+			print STDERR "Group deletion failed.\n";
+			bail(1);
+		}
+
+		putlog('debug', "Getting 'before' list of accessible keys for " . $opts{'delete-group'} . " ...");
+		foreach (get_group_access($opts{'delete-group'})) {	
+			$before{$_} = 1;
+		}
+		foreach (get_group_denies($opts{'delete-group'})) {	
+			$before{$_} = 1;
+		}
+
+		unless (cleanup_group($opts{'delete-group'})) {
+			putlog('err', "Error while clearing existing membership list of " . $opts{'delete-group'} . ".");
+			print STDERR "Fatal: membership of " . $opts{'delete-group'} . " not cleared.\n";
+			bail(1);
+		}
+
+		$ret = 0;
+		foreach (keys(%before)) {
+			putlog('debug', "Accesss for " . $opts{'delete-group'} . " to $_ has changed.  Re-encrypting...");
+			unless (encrypt_asc($_, $user, $pass, "")) {
+				putlog('err', "Error while updating the key $_.");
+				print STDERR "Update of $_ failed.\n";
+				$ret = 1;
+			}
+		}
+
+		putlog('notice', "Group " . $opts{'delete-group'} . " successfully deleted.");
+		print STDOUT "Group " . $opts{'delete-group'} . " deleted.\n";
+		bail(0);
+	} elsif ($opts{'show-group'}) {
+		unless (check_group($opts{'show-group'})) {
+			putlog('err', "Attempted to display group " . $opts{'show-group'} . " but it doesn't exist.");
+			print STDERR "Fatal: group " . $opts{'show-group'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless (show_group($opts{'show-group'})) {
+			putlog('err', "Error while display details for " . $opts{'show-group'} . ".");
+			print STDERR "Group display failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Group details for " . $opts{'show-group'} . " successfully displayed.");
+		bail(0);
+	} elsif ($opts{'list-groups'}) {
+		if (defined($ARGV[0])) {
+			$opts{'list-groups'} = $ARGV[0];
+		} else {
+			$opts{'list-groups'} = '.';
+		}
+
+		unless (list_groups($opts{'list-groups'})) {
+			putlog('err', "Error while listing groups matching pattern: " . $opts{'list-groups'});
+			print STDERR "Group listing failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Successfully listed groups matching pattern: " . $opts{'list-groups'});
+		bail(0);
+	} elsif ($opts{'add-grp-access'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to add to a group by non-owner");
+			print STDERR "Fatal: only the script owner can run --add-grp-access\n";
+			bail(1);
+		}
+
+		unless (defined($ARGV[0])) {
+			print STDERR "Error: no members specified to be added to group.\n";
+	                show_help();
+			bail(1);
+        	}
+
+		unless (check_group($opts{'add-grp-access'})) {
+			putlog('err', "Attempted to add to group " . $opts{'add-grp-access'} . " but it doesn't exist.");
+			print STDERR "Fatal: group " . $opts{'add-grp-access'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		putlog('debug', "Getting 'before' list of accessible keys for " . $opts{'add-grp-access'} . " ...");
+		foreach (get_user_access($opts{'add-grp-access'})) {	
+			$before{$_} = 1;
+		}
+
+		$ret = 0;
+		foreach $buf (split/,/, $ARGV[0]) {
+			unless (check_keys($buf)) {
+				putlog('err', "Attempted to add user $buf to group " . $opts{'add-grp-access'} . " but keys don't exist.");
+				print STDERR "Error: keys for $buf don't exist.\n";
+				$ret = 1;
 				next;
 			}
-			$keyname = $1;
-			if ($opts{a}) {
-				if (check_asc($keyname)) {
-					putlog('notice', "Incomplete: Key already exists for $keyname");
-					print STDERR "Key already exists for $keyname\n";
-					$exitval = 1;
-					next;
+			unless(add_to_group($opts{'add-grp-access'}, $buf)) {
+				putlog('err', "Error while adding member to " . $opts{'add-grp-access'} . ": $buf");
+				print STDERR "Error: unable to add $buf to group.\n";
+				$ret = 1;
+			}
+		}
+		bail(1) if ($ret);
+
+		putlog('debug', "Getting 'after' list of accessible keys for " . $opts{'add-grp-access'} . " ...");
+		foreach (get_user_access($opts{'add-grp-access'})) {	
+			$after{$_} = 1;
+		}
+
+		$ret = 0;
+		foreach (keys(%before), keys(%after)) {
+			next if (($before{$_}) && ($after{$_}));
+			putlog('debug', "Accesss for " . $opts{'add-grp-access'} . " to $_ has changed.  Re-encrypting...");
+			unless (encrypt_asc($_, $user, $pass, "")) {
+				putlog('err', "Error while updating the key $_.");
+				print STDERR "Update of $_ failed.\n";
+				$ret = 1;
+			}
+		}
+
+		putlog('notice', "Members succesfully added to group  " . $opts{'add-grp-access'} . ": $ARGV[0]");
+		print STDOUT "Members succesfully added to " . $opts{'add-grp-access'} . "\n";
+		bail(0);
+	} elsif ($opts{'rem-grp-access'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to add to a group by non-owner");
+			print STDERR "Fatal: only the script owner can run --rem-grp-access\n";
+			bail(1);
+		}
+
+		unless (defined($ARGV[0])) {
+			print STDERR "Error: no members specified to be removed from group.\n";
+	                show_help();
+			bail(1);
+        	}
+
+		unless (check_group($opts{'rem-grp-access'})) {
+			putlog('err', "Attempted to remove from group " . $opts{'rem-grp-access'} . " but it doesn't exist.");
+			print STDERR "Fatal: group " . $opts{'rem-grp-access'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		putlog('debug', "Getting 'before' list of accessible keys for " . $opts{'rem-grp-access'} . " ...");
+		foreach (get_user_access($opts{'rem-grp-access'})) {	
+			$before{$_} = 1;
+		}
+
+		$ret = 0;
+		foreach $buf (split/,/, $ARGV[0]) {
+			unless (check_keys($buf)) {
+				putlog('err', "Attempted to remove user $buf from group " . $opts{'add-grp-access'} . " but keys don't exist.");
+				print STDERR "Error: keys for $buf don't exist.\n";
+				$ret = 1;
+				next;
+			}
+			unless(rem_from_group($opts{'rem-grp-access'}, $buf)) {
+				putlog('err', "Error while removing member from " . $opts{'rem-grp-access'} . ": $buf");
+				print STDERR "Error: unable to add $buf to group.\n";
+				$ret = 1;
+			}
+		}
+		bail(1) if ($ret);
+
+		putlog('debug', "Getting 'after' list of accessible keys for " . $opts{'rem-grp-access'} . " ...");
+		foreach (get_user_access($opts{'rem-grp-access'})) {	
+			$after{$_} = 1;
+		}
+
+		$ret = 0;
+		foreach (keys(%before), keys(%after)) {
+			next if (($before{$_}) && ($after{$_}));
+			putlog('debug', "Accesss for " . $opts{'rem-grp-access'} . " to $_ has changed.  Re-encrypting...");
+			unless (encrypt_asc($_, $user, $pass, "")) {
+				putlog('err', "Error while updating the key $_.");
+				print STDERR "Update of $_ failed.\n";
+				$ret = 1;
+			}
+		}
+
+		putlog('notice', "Members succesfully removed from group " . $opts{'rem-grp-access'} . ": $ARGV[0]");
+		print STDOUT "Members succesfully removed from group " . $opts{'rem-grp-access'} . "\n";
+		bail(0);
+	} elsif ($opts{'create-key'}) {
+		if (check_asc($opts{'create-key'})) {
+			putlog('err', "Attempted to create key " . $opts{'create-key'} . " but it already exist.");
+			print STDERR "Fatal: key " . $opts{'create-key'} . " already exist.\n";
+			bail(1);
+		}
+
+		if (defined($ARGV[0])) {
+			$ret = 0;
+			foreach $buf (split/,/, $ARGV[0]) {
+				if ($buf =~ s/^-//) {
+					$mod = "-";
 				} else {
-					print STDOUT "\nAdding new key in $keyname ...\n";
-					$buf = "";
+					$mod = "";
 				}
-			} elsif ($opts{c}) {
-				unless (check_asc($keyname)) {
-					putlog('notice', "Incomplete: Asc for $keyname doesn't exist");
-					print STDERR "Asc for $keyname doesn't exist\n";
-					$exitval = 1;
-					next;
-				}
-				unless ($buf = decrypt_asc($user, $pass, $keyname)) {
-					putlog('notice', "Incomplete: Authoriztion refused for $keyname");
-					print STDERR "Authoriztion refused for $keyname\n";
-					$exitval = 1;
-					next;
-				}
-				print STDOUT "\nChanging key in file $ARGV[0] ...\n";
-			} elsif ($opts{F}) {
-				if (check_asc($keyname)) {
-					unless ($buf = decrypt_asc($user, $pass, $keyname)) {
-						putlog('notice', "Incomplete: Authoriztion refused for $keyname");
-						print STDERR "Authoriztion refused for $keyname\n";
-						$exitval = 1;
+				if ($buf =~ s/^\@//) {
+					$grp = "@";
+					unless (check_group($buf)) {
+						putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'create-key'} . " but it doesn't exist.");
+						print STDERR "Error: group " . $buf . " doesn't exist.\n";
+						$ret = 1;
 						next;
 					}
 				} else {
-					$buf = "";
+					unless (check_keys($buf)) {
+						putlog('err', "Attempted to add $mod$buf to key " . $opts{'create-key'} . " but keys don't exist.");
+						print STDERR "Error: user $buf don't exist.\n";
+						$ret = 1;
+						next;
+					}
+					$grp = "";
+				}
+				unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
+					putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
+					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
+					$ret = 1;
+				}
 			}
+			bail(1) if ($ret);
+		}
+
+		$buf = get_passwd("New password for " . $opts{'create-key'}, 1);
+
+		unless (encrypt_asc($opts{'create-key'}, $user, $pass, $buf)) {
+			putlog('err', "Error while creating the key " . $opts{'create-key'} . ".");
+			print STDERR "Key creation failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key " . $opts{'create-key'} . " successfully created.");
+		print STDOUT "Key " . $opts{'create-key'} . " created.\n";
+		bail(0);
+	} elsif ($opts{'delete-key'}) {
+		unless (check_asc($opts{'delete-key'})) {
+			putlog('err', "Attempted to delete key " . $opts{'delete-key'} . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $opts{'delete-key'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless ($OWNER) {
+			unless (fetch_asc($opts{'delete-key'})) {
+				putlog('err', "Error while fetching key " . $opts{'delete-key'});
+				print STDERR "Error: unable to fetch key " . $opts{'delete-key'} . "\n";
+				bail(1);
 			}
-			if($opts{F}) {
-				$buf .= "$newpass\n";
-			} else {
-				$buf .= get_passwd("Enter new password", 1);
-			}
-			if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
-				$buf = $1;
-			}
-			print STDOUT "\nEncrypting asc file for $keyname ...\n\n";
-			unless (encrypt_asc($buf, $keyname, @pub)) {
-				putlog('notice', "Incomplete: Asc encryption for $keyname failed");
-				print STDERR "Asc encryption for $keyname failed\n";
-				$exitval = 1;
-				next;
+				
+			unless ($buf = decrypt_asc($user, $pass, $opts{'delete-key'})) {
+				putlog('err', "Error while decrypting key " . $opts{'delete-key'});
+				print STDERR "Error: unable to decrypt key " . $opts{'delete-key'} . "\n";
+				bail(1);
 			}
 		}
-		if ($exitval) {
-			putlog('notice', "Incomplete: Errors encountered, see output");
-			print STDERR "Incomplete: Errors encountered, see output\n";
-			exit(1);
+
+		unless (delete_asc($opts{'delete-key'})) {
+			putlog('err', "Error while fetching key " . $opts{'delete-key'});
+			print STDERR "Error: unable to fetch key " . $opts{'delete-key'} . "\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key " . $opts{'delete-key'} . " successfully deleted.");
+		print STDOUT "Key " . $opts{'delete-key'} . " deleted.\n";
+		bail(0);
+	} elsif ($opts{'change-key'}) {
+		unless (check_asc($opts{'change-key'})) {
+			putlog('err', "Attempted to change key " . $opts{'change-key'} . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $opts{'change-key'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		$buf = get_passwd("New password for " . $opts{'change-key'}, 1);
+
+		unless (encrypt_asc($opts{'change-key'}, $user, $pass, $buf)) {
+			putlog('err', "Error while creating the key " . $opts{'change-key'} . ".");
+			print STDERR "Key creation failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key " . $opts{'change-key'} . " successfully changed.");
+		print STDOUT "Key " . $opts{'change-key'} . " changed.\n";
+		bail(0);
+	} elsif ($opts{'list-keys'}) {
+		if (defined($ARGV[0])) {
+			$opts{'list-keys'} = $ARGV[0];
 		} else {
-			putlog('notice', "Completed.");
-			print STDOUT "\nDone.\n";
-			exit(0);
+			$opts{'list-keys'} = '.';
 		}
-	}
 
-	if ($opts{d}) {
-		print STDOUT "\nDeleting asc file $ARGV[0] ...\n";
+		unless (list_keys($opts{'list-keys'})) {
+			putlog('err', "Error while listing keys matching pattern: " . $opts{'list-keys'});
+			print STDERR "Key listing failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Successfully listed keys matching pattern: " . $opts{'list-keys'});
+		bail(0);
+	} elsif ($opts{'add-key-access'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to add access to a key by non-owner");
+			print STDERR "Fatal: only the script owner can run --add-key-access\n";
+			bail(1);
+		}
+
+		unless (defined($ARGV[0])) {
+			print STDERR "Error: no members specified to be added to key.\n";
+	                show_help();
+			bail(1);
+        	}
+
+		unless (check_asc($opts{'add-key-access'})) {
+			putlog('err', "Attempted to grant access to " . $opts{'add-key-access'} . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $opts{'add-key-access'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		if (defined($ARGV[0])) {
+			$ret = 0;
+			foreach $buf (split/,/, $ARGV[0]) {
+				if ($buf =~ s/^-//) {
+					$mod = "-";
+				} else {
+					$mod = "";
+				}
+				if ($buf =~ s/^\@//) {
+					$grp = "@";
+					unless (check_group($buf)) {
+						putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'add-key-access'} . " but it doesn't exist.");
+						print STDERR "Error: group " . $buf . " doesn't exist.\n";
+						$ret = 1;
+						next;
+					}
+				} else {
+					unless (check_keys($buf)) {
+						putlog('err', "Attempted to add $mod$buf to key " . $opts{'add-key-access'} . " but keys don't exist.");
+						print STDERR "Error: user $buf don't exist.\n";
+						$ret = 1;
+						next;
+					}
+					$grp = "";
+				}
+				unless(add_to_asc($opts{'add-key-access'}, "$mod$grp$buf")) {
+					putlog('err', "Error while granting access to " . $opts{'add-key-access'} . ": $mod$grp$buf");
+					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
+					$ret = 1;
+				}
+			}
+			bail(1) if ($ret);
+		}
+
+		unless (encrypt_asc($opts{'add-key-access'}, $user, $pass, undef)) {
+			putlog('err', "Error while updating the key " . $opts{'add-key-access'} . ".");
+			print STDERR "Key update failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key " . $opts{'add-key-access'} . " access updated.");
+		print STDOUT "Key " . $opts{'add-key-access'} . " access updated.\n";
+		bail(0);
+	} elsif ($opts{'rem-key-access'}) {
+		unless ($OWNER) {
+			putlog('warning', "Attempt to remove access to a by non-owner");
+			print STDERR "Fatal: only the script owner can run --rem-key-access\n";
+			bail(1);
+		}
+
+		unless (defined($ARGV[0])) {
+			print STDERR "Error: no members specified to be removed from key.\n";
+	                show_help();
+			bail(1);
+        	}
+
+		unless (check_asc($opts{'rem-key-access'})) {
+			putlog('err', "Attempted to remove access from " . $opts{'rem-key-access'} . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $opts{'rem-key-access'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		if (defined($ARGV[0])) {
+			$ret = 0;
+			foreach $buf (split/,/, $ARGV[0]) {
+				# modifier doens't matter here, just strip it
+				$buf =~ s/^-//;  # modifier doens't matter here, just strip it
+				if ($buf =~ s/^\@//) {
+					$grp = "@";
+					unless (check_group($buf)) {
+						putlog('err', "Attempted to remove \@$buf to key " . $opts{'rem-key-access'} . " but it doesn't exist.");
+						print STDERR "Error: group " . $buf . " doesn't exist.\n";
+						$ret = 1;
+						next;
+					}
+				} else {
+					unless (check_keys($buf)) {
+						putlog('err', "Attempted to remove $buf to key " . $opts{'rem-key-access'} . " but keys don't exist.");
+						print STDERR "Error: user $buf don't exist.\n";
+						$ret = 1;
+						next;
+					}
+					$grp = "";
+				}
+				unless(rem_from_asc($opts{'rem-key-access'}, "$grp$buf")) {
+					putlog('err', "Error while granting access to " . $opts{'rem-key-access'} . ": $grp$buf");
+					print STDERR "Error: unable to add $grp$buf to key.\n";
+					$ret = 1;
+				}
+			}
+			bail(1) if ($ret);
+		}
+
+		unless (encrypt_asc($opts{'rem-key-access'}, $user, $pass, undef)) {
+			putlog('err', "Error while updating the key " . $opts{'rem-key-access'} . ".");
+			print STDERR "Key update failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key " . $opts{'rem-key-access'} . " access updated.");
+		print STDOUT "Key " . $opts{'rem-key-access'} . " access updated.\n";
+		bail(0);
+	} elsif ($opts{'show-key'}) {
+		unless (check_asc($opts{'show-key'})) {
+			putlog('err', "Attempted to key key " . $opts{'show-key'} . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $opts{'show-key'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless (show_key($opts{'show-key'})) {
+			putlog('err', "Error while display details for " . $opts{'show-key'} . ".");
+			print STDERR "Key display failed.\n";
+			bail(1);
+		}
+
+		putlog('notice', "Key details for " . $opts{'show-key'} . " successfully displayed.");
+		bail(0);
+	}
+	
+	if ($ARGV[0]) {
 		unless (check_asc($ARGV[0])) {
-			putlog('notice', "Incomplete: Asc doesn't exists");
-			print STDERR "Asc doesn't exists\n";
-			exit(1);
+			putlog('err', "Attempted to decrypt key " . $ARGV[0] . " but it doesn't exist.");
+			print STDERR "Fatal: key " . $ARGV[0] . " doesn't exist.\n";
+			bail(1);
 		}
-		unless (delete_asc($ARGV[0])) {
-			putlog('notice', "Incomplete: Asc deleltion failed");
-			print STDERR "Asc deleltion failed\n";
-			exit(1);
+
+		unless (fetch_asc($ARGV[0])) {
+			putlog('err', "Error while fetching key " . $ARGV[0]);
+			print STDERR "Error: unable to fetch key " . $ARGV[0] . "\n";
+			bail(1);
 		}
-		putlog('notice', "Completed.");
-		print STDOUT "\nDone.\n";
-		exit(0);
+			
+		unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
+			putlog('err', "Error while decrypting key " . $ARGV[0]);
+			print STDERR "Error: unable to decrypt key " . $ARGV[0] . "\n";
+			bail(1);
+		}
+		print $buf;
+		bail(0);
 	}
 
-	print STDOUT "\nDecrypting asc file $ARGV[0] ...\n";
-	unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
-		putlog('notice', "Incomplete: Asc decryption failed");
-		print STDERR "Asc decryption failed\n";
-		exit(1);
-	}
-	print "\n$buf\n";
-		
-	putlog('notice', "Completed.");
-	print STDOUT "Done.\n";
-	exit(0);
+	putlog('err', "The end of main() reached.  No action performed?");
+	print STDERR "Fatal: no action performed.\n";
+	bail(1);
 }
 
 # SUB FUNCS ################################################################
 
+sub bail ($) {
+	my($code) = $_[0];
+	my($d, $term);
+
+	exit($code) if (($DEBUG) && ($code));
+
+	if ((defined($TEMPDIR)) && ( -d $TEMPDIR)) {
+		if (opendir($d, $TEMPDIR))  {
+			foreach (readdir($d)) {
+				/(.+)/;
+				unlink("$TEMPDIR/$1");
+				rmdir("$TEMPDIR/$1");
+			}
+			closedir($d);
+		}
+		rmdir($TEMPDIR);
+	}
+		
+        exit($_[0]);
+}
+
 sub show_help () {
 	print STDOUT "$ARGV0 version $VER
 
-	usage: $ARGV0 [<opts>] [<key\@host>]
-		-v  show version: will display the RCS rev.
-		-h  show help: causes this message to be shown.
-		-c  change key: changes the stored password for a key.
-		-C  change pass: changes the access password for user.
-		-a  add key: adds a new key entry to the password list.
-		-d  delete key: deletes a key from the password list.
+usage: $ARGV0 [<opts>]
 
-		-l <regex>: list all the keys matching the regex
+-v  show version. will display the RCS rev.
+-h  show help. causes this message to be shown.
 
-		-g <user>: Grants a user access to managed passwords. 
-		-r <user>: Revokes a user's acesss to passwords.
+-d  debug.   enable more verbose logging.
+-D  no debug.  disable more verbose logging.
 
-		-H <number>:  used with -c to specify the number of past
-                       passwords to retain.  Must be 1 or greater.
+-H <int>   Number of history entires to keep.
 
-		-F <filename>: bulk import of \"key password\" pairs from
-		       a file. Adds new or changes existing keyfiles as
-		       appropriate.
-		\n";
+Only one of:
+
+--create-user <name> [desc] [group1][,group2][,group3]...
+--delete-user <name>
+--show-user <name>
+--list-users [regex]
+--create-group <name> [desc]
+--delete-group <name>
+--show-group [name]
+--list-groups [regex]
+--create-key <name> [desc] [<+|-><user1|group1>][,<+|-><user2|group2>]...
+--delete-key <name>
+--change-key <name>
+--list-keys [regex]
+--show-key <name>    (default action)
+--add-key-access <name> <+|-><user1|group1>[,<+|-><user2|group2>]...
+--rem-key-access <name> <user1|group1>[,<user2|group2>]...
+--change-pass [name]
+\n";
 	return();
+}
+
+sub putlog ($$) {
+	my($pri) = $_[0];
+	my($msg) = $_[1];
+
+	chomp($msg);
+
+	return() unless (($pri ne "debug") || ($DEBUG));
+
+	$msg =~ s/([^\012\040-\176])/sprintf("\\%03o", unpack("C", $1))/eg;
+
+	eval {
+		openlog($ARGV0, 'ndelay,pid', 'mail');
+		syslog($pri, "%s", $msg);
+		closelog();
+	};
+
+	if ($@ ne "") {
+		chomp($@);
+		$@ =~ s/^.*\n//s;
+		print "Unable to log via syslog: $@\n";
+		print STDERR "" . strftime("%b %d %T", localtime) . ": syslog failed: $@\n"
+	}
+
+	print STDERR "" . scalar localtime () . ": $msg\n" if ($DEBUG);
+}
+
+sub connect_db($$$$) {
+	my($db) = $_[0];
+	my($host) = $_[1];
+	my($user) = $_[2];
+	my($pass) = $_[3];
+	my($hand);
+
+	putlog('debug', "Connecting to $db\@$host as $user ...");
+
+        $hand = DBI->connect("DBI:mysql:database=$db;host=$host", $user, $pass, {
+		 PrintError => 0
+	});
+
+	unless ($hand) {
+		putlog('err', "Unable to connect to DB $db\@$host: $DBI::errstr");
+		return(undef);
+	}
+
+	putlog('debug', "Succesfully connected to DB $db\@$host.");
+
+        return($hand);
 }
 
 sub get_passwd ($$) {
@@ -641,44 +1119,101 @@ sub get_passwd ($$) {
 	return($key);
 }
 
-sub check_key ($) {
-	my($usr) = $_[0];
-	my($p) = gensym;
-	my($buf, $out);
+sub read_config ($) {
+        my($cfg) = $_[0];
+        my(@stat, $ret);
 
-	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
-		putlog('err', "Error: no key rings for verification of $usr.");
+	return(1) unless defined($CFGFILE);
+
+	putlog('debug', "Reading config file $cfg ...");
+
+	unless (@stat = stat($cfg)) {
+		$ret = $!;
+		putlog('err', "Unable to stat config file: $cfg: $ret");
+		print STDERR "Error: unable to stat config file: $cfg: $ret\n";
 		return(0);
+	}
+
+	unless ($stat[4] == $EUID) {
+		putlog('err', "Insecure owner on config: $cfg: " . scalar getpwuid($stat[4]) . "(" . $stat[4] . ") != " . scalar getpwuid($EUID) . "($EUID)");
+		print STDERR "Error: wrong ownder on config file: $cfg: " . $stat[4] . "\n";
+		return(0);
+	}
+
+	unless (($stat[2] & 00077) == 0) {
+		putlog('err', sprintf "Insecure permissions on config: $cfg: %04o", ($stat[2] & 07777));
+		printf STDERR "Error: insecure mode on config file: $cfg: %04o\n", ($stat[2] & 07777);
+		return(0);
+	}
+
+        unless ($ret = do ($cfg)) {
+                if ($@) {
+			$@ =~ s/^.*\n//s;
+			putlog('err', "Unable to read config file: $cfg: $@");
+                        return(0);
+                }
+                unless (defined ($ret)) {
+			putlog('err', "Error while read config file: $cfg: $!");
+			return(0);
+                }
+                putlog('err', "Error in config file $cfg: $ret");
+		return(0);
+        }
+
+	putlog('debug', "Succesfully read config file $cfg: $ret");
+
+        return (1);
+}
+
+sub check_keys ($) {
+	my($usr) = $_[0];
+	my($p, $buf, $out, $ret, $file);
+
+	putlog('debug', "Checking validity of keys for $usr ...");
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+	
+	unless (( -f "$file.sec") && ( -f "$file.pub")) {
+		return(0) unless (fetch_keys($usr));
 	}
 
 	$buf = open($p, "-|");
 
 	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for key verification: $!");
-		print STDERR "Error: unable to fork gpg for key verification: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for key verification: $ret");
+		print STDERR "Error: unable to fork gpg for key verification: $ret\n";
 		return(0);
 	} elsif ($buf == 0) {
 		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
-			exit(1);
-		}	
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stdin to /dev/null: $ret\n";
+			bail(1);
+		}       
 		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
-			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
+			bail(1);
+		}       
+		putlog('debug', join(" ", ('gpg', '-q', '--no-secmem-warning',
 			'--list-secret-keys', '--no-default-keyring',
-			'--keyring', "$usr.pub", '--secret-keyring', "$usr.sec");
-		putlog('err',  "Error: unable to exec gpg for key verification: $!");
-		print STDERR "Error: unable to exec gpg for key verification: $!\n";
+			'--keyring', "$file.pub", '--secret-keyring', "$file.sec")));
+		{ exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
+			'--list-secret-keys', '--no-default-keyring',
+			'--keyring', "$file.pub", '--secret-keyring', "$file.sec"); }
+		$ret = $!;
+		putlog('err',  "Error: unable to exec gpg for key verification: $ret");
+		print STDERR "Error: unable to exec gpg for key verification: $ret\n";
 		exit(1);
 	}
-	
+
 	while (<$p>) {
 		chomp();
-		next unless (/^sec\s.+( |\(|<)($usr)( \)|@)/);
+		putlog('debug', "gpg: $_");
+		next unless (/^(uid|sec)\s.+[ <(]($usr)[ @)]/);
 		$out = $2;
 	}
 
@@ -696,41 +1231,299 @@ sub check_key ($) {
 		return(0);
 	}
 
+	putlog('debug', "Validation of keys for $usr succesfull.");
+
+	return(1);
+}
+
+sub delete_keys ($) {
+	my($usr) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Deleting keys for $usr from database...");
+
+	$sql = "DELETE FROM users WHERE name = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to delete " . $usr . "'s keys: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to delete " . $usr . "'s keys: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "Keys for $usr successfully deleted from database.");
+
+	return(1);
+}
+
+sub fetch_keys ($) {
+	my($usr) = $_[0];
+	my($sql, $qry, $res);
+	my($f, $file);
+
+	putlog('debug', "Fetching keys for $usr from database...");
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	$sql = "SELECT * FROM users WHERE name = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s keys: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s keys: " . $qry->errstr);
+		return(0);
+	}
+
+	$res = $qry->fetchrow_hashref();
+
+	unless (defined($res)) {
+		putlog('notice', "No keys for $usr are present in the database.");
+		return(0);
+	}
+
+	unless ($res->{'name'} eq $usr) {
+		# WTF? How did this happen!?? 
+		putlog('err', "The query for " . $usr . "'s keys has returned " . $res->{'name'} . "'s keys.");
+		return(0);
+	}
+
+	unless (open($f, ">$file.sec")) {
+		putlog('err', "Unable to open key file for writing: $file.sec: $!");
+		return(0);
+	}
+
+	unless (print $f $res->{'secret'}) {
+		putlog('err', "Unable to write the key to file: $file.sec: $!");
+		return(0);
+	}
+
+	unless (close($f)) {
+		putlog('err', "Unable to save the key file after writing: $file.sec: $!");
+		return(0);
+	}
+
+	unless (open($f, ">$file.pub")) {
+		putlog('err', "Unable to open key file for writing: $file.pub: $!");
+		return(0);
+	}
+
+	unless (print $f $res->{'public'}) {
+		putlog('err', "Unable to write the key to file: $file.pub: $!");
+		return(0);
+	}
+
+	unless (close($f)) {
+		putlog('err', "Unable to save the key file after writing: $file.pub: $!");
+		return(0);
+	}
+
+	putlog('debug', "Keys for $usr successfully fetched from database.");
+
+	return(1);
+}
+
+sub save_keys ($) {
+	my($usr) = $_[0];
+	my($sql, $qry, $res);
+	my($f, $file);
+
+	putlog('debug', "Saving keys for $usr in database...");
+
+	$sql = "SELECT * FROM users WHERE name = '$usr'";
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s keys: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s keys: " . $qry->errstr);
+		return(0);
+	}
+
+	$res = $qry->fetchrow_hashref();
+
+	unless (open($f, "<$file.sec")) {
+		putlog('err', "Unable to open key file for reading: $file.sec: $!");
+		return(0);
+	}
+
+	$res->{'secret'} = join("",  (<$f>));
+
+	close($f);
+
+	unless (open($f, "<$file.pub")) {
+		putlog('err', "Unable to open key file for reading: $file.pub: $!");
+		return(0);
+	}
+
+	$res->{'public'} = join("",  (<$f>));
+	
+	close($f);
+
+	# could use REPLACE, but later we might want to presenve the timestamp
+	if (defined($res->{'name'})) {
+		$sql = "UPDATE users SET name = ?, secret = ?, public = ? WHERE name = '$usr'";
+	} else {
+		$sql = "INSERT INTO users VALUES ( ?, ?, ?, NULL)";
+	}
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to save " . $usr . "'s keys: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute($usr, $res->{'secret'}, $res->{'public'})) {
+		putlog('err', "Unable to execute SQL query to save " . $usr . "'s keys: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "Keys for $usr successfully saved database:" . $qry->errstr);
+
+	return(1);
+}
+
+sub create_keys ($) {
+	my($usr) = $_[0];
+	my($buf, $key, @pwe, $ret);
+	my($p, $file);
+
+	unless (@pwe = getpwnam($usr)) {
+		$ret = $!;
+		putlog('err',  "Error: Can't find details for user $usr: $ret");
+		print STDERR "Error: Can't find details for user $usr: $ret\n";
+		return(0);
+	}
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	$pwe[6] = "$usr\@localhost" unless ($pwe[6]);
+
+	$key = get_passwd("New password for $usr", 1);
+
+	$buf = open($p, "|-");
+
+	unless (defined($buf)) {
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for key creation: $ret");
+		print STDERR "Error: unable to fork gpg for key creation: $ret\n";
+		return(0);
+	} elsif ($buf == 0) {
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
+			exit(1);
+		}       
+		putlog('debug', join(" ", ('gpg', '--no-greeting', '--no-secmem-warning', 
+			'--no-default-keyring',
+			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
+			'--batch', '--gen-key', '--yes', '-v', '--logger-fd', '1')));
+		{ exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
+			'--no-default-keyring',
+			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
+			'--batch', '--gen-key', '--yes', '-v', '--logger-fd', '1'); }
+		putlog('err',  "Error: unable to exec gpg for key creation: $!");
+		exit(1);
+	}
+
+	print $p "
+		%echo $pwe[6] ($usr) <$usr\@localhost>
+		Key-Type: DSA
+		Key-Length: 1024
+		Subkey-Type: ELG-E
+		Subkey-Length: 1024
+		Name-Real: $pwe[6]
+		Name-Comment: $usr
+		Name-Email: $usr\@localhost
+		Expire-Date: 0
+		Passphrase: $key
+		%pubring $file.pub
+		%secring $file.sec
+		%commit
+		%echo done\n";
+
+	close($p);
+
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: key creation gpg process was killed: $buf");
+		print STDERR "Error: key creation gpg process was killed: $buf\n";
+		return(0);
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
+		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+		return(0);
+	}
+
+	return(0) unless save_keys($usr);
+
 	return(1);
 }
 
 sub check_auth ($$) {
 	my($usr) = $_[0];
 	my($key) = $_[1];
-	my($buf);
-	my($p) = gensym;
+	my($buf, $p, $ret, $file);
 
-	unless (( -f "$usr.sec") && ( -f "$usr.pub")) {
-		putlog('err', "Error: no key rings for authentication of $usr.");
-		return(0);
+	putlog('debug', "Authenticating $usr against their keys...");
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	unless (( -f "$file.sec") && ( -f "$file.pub")) {
+		return(0) unless (fetch_keys($usr));
 	}
 
 	$buf = open($p, "|-");
 
 	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for authenticaton: $!");
-		print STDERR "Error: unable to fork gpg for authenticaton: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for authenticaton: $ret");
+		print STDERR "Error: unable to fork gpg for authenticaton: $ret!\n";
 		return(0);
 	} elsif ($buf == 0) {
-		unless (($DEBUG) || (close(STDERR) && open(STDERR, "</dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
-			'--no-secmem-warning',
-			'--no-tty', '--passphrase-fd', '0',
-			'--no-default-keyring',
-			'--keyring', "$usr.pub",
-			'--secret-keyring', "$usr.sec",
-			'-u', "$usr", '-s', "$usr.sec");
-		putlog('err',  "Error: unable to exec gpg for authenticaton: $!\n");
-		print STDERR "Error: unable to exec gpg for authenticaton: $!\n";
+		}       
+		putlog('debug', join(" ", ('gpg', '-q', '-a', '-o', '/dev/null',
+			   '--no-secmem-warning',
+			   '--no-tty', '--passphrase-fd', '0',
+			   '--batch',
+			   '--no-default-keyring',
+			   '--keyring', "$file.pub",
+			   '--secret-keyring', "$file.sec",
+			   '-u', "$usr", '-s', "$file.sec")));
+		{ exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
+			   '--no-secmem-warning',
+			   '--no-tty', '--passphrase-fd', '0',
+			   '--batch',
+			   '--no-default-keyring',
+			   '--keyring', "$file.pub",
+			   '--secret-keyring', "$file.sec",
+			   '-u', "$usr", '-s', "$file.sec"); };
+		putlog('err',  "Error: unable to exec gpg for authenticaton: $ret\n");
 		exit(1);
 	}
 
@@ -752,256 +1545,517 @@ sub check_auth ($$) {
 		return(0);
 	}
 
+	putlog('debug', "Authentication of $usr succesfull.");
+
 	return(1);
 }
 
-sub create_key ($) {
+sub show_user ($) {
 	my($usr) = $_[0];
-	my($buf, $key, @pwe);
-	my($p) = gensym;
+	my($sql, $qry, $res);
 
-	unless (@pwe = getpwnam($usr)) {
-		putlog('err',  "Error: Can't find details for user $usr: $!");
-		print STDERR "Error: Can't find details for user $usr: $!\n";
+	putlog('debug', "Fetching group membership for $usr from database...");
+
+	$sql = "SELECT name FROM grpmbrs WHERE member = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s groups: " . $DBHAND->errstr);
 		return(0);
 	}
 
-	$pwe[6] = "$usr\@localhost" unless ($pwe[6]);
-
-	$key = get_passwd("Enter new password", 1);
-
-	$buf = open($p, "|-");
-
-	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for key creation: $!");
-		print STDERR "Error: unable to fork gpg for key creation: $!\n";
-		return(0);
-	} elsif ($buf == 0) {
-		exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
-			'--no-default-keyring',
-			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
-			'--batch', '--gen-key', '--yes');
-		putlog('err',  "Error: unable to exec gpg for key creation: $!");
-		print STDERR "Error: unable to exec gpg for key creation: $!\n";
-		exit(1);
-	}
-
-	print $p "
-		%echo $pwe[6] ($usr) <$usr\@localhost>
-		Key-Type: DSA
-		Key-Length: 1024
-		Subkey-Type: ELG-E
-		Subkey-Length: 1024
-		Name-Real: $pwe[6]
-		Name-Comment: $usr
-		Name-Email: $usr\@localhost
-		Expire-Date: 0
-		Passphrase: $key
-		%pubring $usr.pub
-		%secring $usr.sec
-		%commit
-		%echo done\n";
-
-	close($p);
-
-	$buf = $? & 127;
-	if ($buf != 0) {
-		putlog('err',  "Error: key creation gpg process was killed: $buf");
-		print STDERR "Error: key creation gpg process was killed: $buf\n";
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s groups: " . $qry->errstr);
 		return(0);
 	}
 
-	$buf = $? >> 8;
-	if ($buf != 0) {
-		putlog('err',  "Error: key creation gpg process returned non-zero: $buf");
-		print STDERR "Error: key creation gpg process returned non-zero: $buf\n";
+	print STDOUT "$usr is a member of:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no groups>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'name'} . "\n";
+		}
+	}
+
+	putlog('debug', "Fetching explicit access for $usr from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '$usr' AND flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s access: " . $DBHAND->errstr);
 		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s access: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$usr has explicit access to:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'name'} . "\n";
+		}
+	}
+
+	putlog('debug', "Fetching explicit denies for $usr from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '$usr' AND flag = '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$usr is explicitly denied from:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'name'} . "\n";
+		}
 	}
 
 	return(1);
 }
 
-sub delete_key ($) {
-	my($usr) = $_[0];
+sub list_users ($) {
+	my($pat) = $_[0];
+	my($sql, $qry, $res);
 
-	$usr =~ /^([\w\.\-]+)$/;
-	$usr = $1;
+	putlog('debug', "Fetching user list from database...");
 
-	unless (unlink("$usr.sec")) {
-		putlog('warning',  "Warning: unable to delete key: $usr.sec: $!");
-		print STDERR "Warning: unable to delete key: $usr.sec: $!\n";
+	$sql = "SELECT name FROM users";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for user listing:" . $DBHAND->errstr);
 		return(0);
 	}
 
-	unless (unlink("$usr.pub")) {
-		putlog('warning',  "Warning: unable to delete key: $usr.pub: $!");
-		print STDERR "Warning: unable to delete key: $usr.pub: $!\n";
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for user listing: " . $qry->errstr);
 		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	while ($res = $qry->fetchrow_hashref()) {
+		next unless ($res->{'name'} =~ /$pat/);
+		print STDOUT "" . $res->{'name'} . "\n";
+	}
+
+	putlog('debug', "User list succesfully fetched from database.");
+
+	return(1);
+}
+
+sub check_group ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Checking existance of group $grp in the database...");
+
+	$sql = "SELECT name FROM groups WHERE name = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for group check:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for group check: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	return(0) if ($qry->rows() < 1);
+
+	putlog('debug', "Group $grp exists in the database.");
+
+	return(1);
+}
+
+sub create_group ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Creating group $grp in the database...");
+
+	$sql = "INSERT INTO groups VALUES ( '$grp' )";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for group creation:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for group creation: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "Group $grp created in the database.");
+
+	return(1);
+}
+
+sub add_to_group ($$) {
+	my($grp) = $_[0];
+	my($mbr) = $_[1];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Adding $mbr to group $grp in the database...");
+
+	# FIXME - do I care if they are in there already or not?
+	$sql = "REPLACE INTO grpmbrs VALUES ( '$grp', '$mbr' )";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for adding user to group :" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for adding user to group: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "User $mbr added to $grp in the database.");
+
+	return(1);
+}
+
+sub rem_from_group ($$) {
+	my($grp) = $_[0];
+	my($mbr) = $_[1];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Removing $mbr from group $grp in the database...");
+
+	$sql = "DELETE FROM grpmbrs where name = '$grp' AND member = '$mbr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for removing user from group :" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for removing user from group: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "User $mbr removed from $grp in the database.");
+
+	return(1);
+}
+
+
+sub delete_group ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Deleting group $grp from database...");
+
+	$sql = "DELETE FROM groups WHERE name = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to delete group $grp: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to delete group $grp: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "Keys for $grp successfully deleted from database.");
+
+	return(1);
+}
+
+
+sub show_group ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Fetching membership of $grp from database...");
+
+	$sql = "SELECT member FROM grpmbrs WHERE name = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch membership of $grp: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch membership of $grp: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$grp has members:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no members>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'member'} . "\n";
+		}
+	}
+
+	putlog('debug', "Fetching explicit access for $grp from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '\@$grp' AND flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s access: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s access: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$grp has explicit access to:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'name'} . "\n";
+		}
+	}
+
+	putlog('debug', "Fetching explicit denies for $grp from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '\@$grp' AND flag = '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$grp is explicitly denied from:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'name'} . "\n";
+		}
 	}
 
 	return(1);
 }
 
-sub change_key ($) {
-	my($usr) = $_[0];
+sub list_groups ($) {
+	my($pat) = $_[0];
+	my($sql, $qry, $res);
 
-	exec {'gpg'} ('gpg', '-q', 
-			'--no-secmem-warning',
-			'--no-default-keyring',
-			'--keyring', "$usr.pub",
-			'--secret-keyring', "$usr.sec",
-			'--edit-key', $usr, 'passwd', 'save', 'quit');
+	putlog('debug', "Fetching group list from database...");
 
-	putlog('err',  "Error: unable to exec gpg for key change: $!");
-	print STDERR "Error: unable to exec gpg for key change: $!\n";
+	$sql = "SELECT name FROM groups";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for group listing:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for group listing: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	while ($res = $qry->fetchrow_hashref()) {
+		next unless ($res->{'name'} =~ /$pat/);
+		print STDOUT "" . $res->{'name'} . "\n";
+	}
+
+	putlog('debug', "Group list succesfully fetched from database.");
+
 	return(1);
 }
 
-sub import_keys () {
-	my($d) = gensym();
-	my($buf, @buf, @pub);
+sub add_to_asc ($$) {
+	my($asc) = $_[0];
+	my($mbr) = $_[1];
+	my($sql, $qry, $res, $mod);
 
-	unless (( ! -e 'pubring.gpg')  || unlink('pubring.gpg')) {
-		putlog('err',  "Error: unable to unlink existing pubring.gpg: $!");
-		print STDERR "Error: unable to unlink existing pubring.gpg: $!\n";
-		return(());
-	}
-	unless (( ! -e 'secring.gpg')  || unlink('secring.gpg')) {
-		putlog('err',  "Error: unable to unlink existing secring.gpg: $!");
-		print STDERR "Error: unable to unlink existing secring.gpg: $!\n";
-		return(());
-	}
-	
-	unless (opendir($d, ".")) {
-		putlog('err',  "Error: unable to open dir for reading: $!");
-		print STDERR "Error: unable to open dir for reading: $!\n";
-		return(());
+	putlog('debug', "Adding $mbr to key $asc in the database...");
+
+	# FIXME - do I care if they are in there already or not?
+	if ($mbr =~ s/^-//) {
+		$mod = "-";
+		$sql = "REPLACE INTO ascmbrs VALUES ( '$asc', '$mbr', '-' )";
+	} else {
+		$mod = "";
+		$sql = "REPLACE INTO ascmbrs VALUES ( '$asc', '$mbr', '+' )";
 	}
 
-	@buf =  readdir($d);
-
-	foreach (@buf) {
-		next unless (/^([^\.]+\.pub)$/);
-		push @pub, $1;
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for adding member to key:" . $DBHAND->errstr);
+		return(0);
 	}
 
-	close($d);	
-
-	unless ($#pub >= 0) {
-		putlog('err',  "Error: no keys to import: *.pub");
-		print STDERR "Error: no keys to import: *.pub\n";
-		return(());
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for adding member to key: " . $qry->errstr);
+		return(0);
 	}
 
-	$buf = fork();
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
 
-	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for import: $!");
-		print STDERR "Error: unable to fork gpg for import: $!\n";
-		return(());
-	} elsif ($buf == 0) {
-		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
-			exit(1);
-		}	
-		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
-			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @pub);
-		putlog('err',  "Error: unable to exec gpg for import: $!");
-		print STDERR "Error: unable to exec gpg for import: $!\n";
-		exit(1);
-	}
+	putlog('debug', "Member $mod$mbr added to $asc in the database.");
 
-	$buf = waitpid($buf, 0);
-
-	$buf = $? & 127;
-	if ($buf != 0) {
-		putlog('err',  "Error: importing gpg process was killed: $buf");
-		print STDERR "Error: importing gpg process was killed: $buf\n";
-		return(());
-	}
-
-	$buf = $? >> 8;
-	if ($buf != 0) {
-		putlog('err',  "Error: importing process returned non-zero: $buf");
-		print STDERR "Error: importing gpg process returned non-zero: $buf\n";
-		return(());
-	}
-
-	return(@pub);
+	return(1);
 }
 
-sub list_ascs () {
-	my($d) = gensym();
-	my(@asc, @buf);
+sub rem_from_asc ($$) {
+	my($asc) = $_[0];
+	my($mbr) = $_[1];
+	my($sql, $qry, $res);
 
-	unless (opendir($d, ".")) {
-		putlog('err',  "Error: unable to open dir for reading: $!");
-		print STDERR "Error: unable to open dir for reading: $!\n";
-		return(());
+	putlog('debug', "Removing $mbr from key $asc in the database...");
+
+	$sql = "DELETE FROM ascmbrs where name = '$asc' AND member = '$mbr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for removing access from key :" . $DBHAND->errstr);
+		return(0);
 	}
 
-	@buf =  readdir($d);
-
-	foreach (@buf) {
-		next unless (/^(.+@.+\.asc)$/);
-		push @asc, $1;
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for removing access from key: " . $qry->errstr);
+		return(0);
 	}
 
-	unless ($#asc >= 0) {
-		putlog('err',  "Error: no keys to list: *@*.asc");
-		print STDERR "Error: no keys to list: *@*.asc\n";
-		return(());
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "User $mbr removed from $asc in the database.");
+
+	return(1);
+}
+
+sub show_key ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Fetching access list for $asc from database...");
+
+	$sql = "SELECT member FROM ascmbrs WHERE name = '$asc' AND flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s accesss: " . $DBHAND->errstr);
+		return(0);
 	}
 
-	close($d);
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s accesss: " . $qry->errstr);
+		return(0);
+	}
 
-	return(@asc);
+	print STDOUT "$asc is a accessable to:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'member'} . "\n";
+		}
+	}
+
+	putlog('debug', "Fetching deny list for $asc from database...");
+
+	$sql = "SELECT member FROM ascmbrs WHERE name = '$asc' AND flag = '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	print STDOUT "$asc is denied to:\n";
+	if ($qry->rows() < 1) {
+		print STDOUT "\t<no entries>\n";
+	} else {
+		while ($res = $qry->fetchrow_hashref()) {
+			print STDOUT "\t" . $res->{'memeber'} . "\n";
+		}
+	}
+
+	return(1);
 }
 
 sub check_asc ($) {
-	my($file) = $_[0];
-	my($p) = gensym;
-	my($buf, $out);
+	my($asc) = $_[0];
+	my($p, $buf, $out, $ret, $file);
 
-	$file .= ".asc" unless ($file =~ /\.asc$/);
+	putlog('debug', "Checking validity of asc for $asc ...");
 
-
-	unless ( -f $file) {
-		return(undef);
+	$asc =~ /^(.*)$/;
+	$file = md5_hex($1);
+	
+	unless ( -f "$file.asc") {
+		return(0) unless (fetch_asc($asc));
 	}
 
 	$buf = open($p, "-|");
 
 	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for asc verification: $!");
-		print STDERR "Error: unable to fork gpg for asc verification: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for asc verification: $ret");
+		print STDERR "Error: unable to fork gpg for asc verification: $ret\n";
 		return(0);
 	} elsif ($buf == 0) {
 		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
-			exit(1);
-		}	
-		unless (close(STDERR) && open(STDERR, ">&STDOUT")) {
-			putlog('err',  "Error: unable to map gpg's stderr to stdout: $!");
-			print STDERR "Error: unable to map gpg's stderr to stdout: $!\n";
-			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '--no-secmem-warning',
-			'--list-only', '--no-default-keyring',
-			'--keyring', '/dev/null', '--secret-keyring', '/dev/null',
-			$file);
-		putlog('err',  "Error: unable to exec gpg for asc verification: $!");
-		print STDERR "Error: unable to exec gpg for asc verification: $!\n";
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stdin to /dev/null: $ret\n";
+			bail(1);
+		}       
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
+			bail(1);
+		}       
+		putlog('debug', "exec: " . join(" ", 'gpg', '--no-secmem-warning',
+                        '--list-only', '--no-default-keyring', '--logger-fd', '1',
+                        '--keyring', '/dev/null', '--secret-keyring', '/dev/null',
+                        "$file.asc"));
+		{ exec {'gpg'} ('gpg', '--no-secmem-warning',
+                        '--list-only', '--no-default-keyring', '--logger-fd', '1',
+                        '--keyring', '/dev/null', '--secret-keyring', '/dev/null',
+                        "$file.asc"); }
+		$ret = $!;
+		putlog('err',  "Error: unable to exec gpg for asc verification: $ret");
+		print STDERR "Error: unable to exec gpg for asc verification: $ret\n";
 		exit(1);
 	}
-	
+
+	$out = "";	
 	while (<$p>) {
+		putlog('debug', "$_");
 		chomp();
 		next unless (/^gpg: encrypted with/);
 		$out .= $_;
@@ -1016,46 +2070,132 @@ sub check_asc ($) {
 		return(0);
 	}
 
+	if ($out eq "") {
+		putlog('err', "Error asc verification failed.");
+		return(0);
+	}
 
-	return(0) unless ($out);
+	putlog('debug', "Validation of asc for $asc succesfull.");
 
 	return(1);
 }
 
+sub fetch_ascs ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res);
+	my($f, $file);
 
-sub encrypt_asc ($$@) {
-	my($key) = $_[0];
-	my($file) = $_[1];
-	my($buf, $out);
-	my($p) = gensym;
-	my(@pub); shift; shift;
-	foreach (@_) { s/\.pub$//; push @pub, "-r", $_; }
+	putlog('debug', "Fetching asc for $asc from database...");
 
-	$file .= ".asc" unless ($file =~ /\.asc$/);
+	$asc =~ /^(.*)$/;
+	$file = md5_hex($1);
 
-	unless (( ! -e $file)  || unlink($file)) {
-		putlog('err',  "Error: unable to unlink existing $file: $!");
-		print STDERR "Error: unable to unlink existing $file: $!\n";
+	$sql = "SELECT * FROM ascs WHERE name = '$asc'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s asc: " . $DBHAND->errstr);
 		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s asc: " . $qry->errstr);
+		return(0);
+	}
+
+	$res = $qry->fetchrow_hashref();
+
+	unless (defined($res)) {
+		putlog('notice', "No ascs for $asc are present in the database.");
+		return(0);
+	}
+
+	unless ($res->{'name'} eq $asc) {
+		# WTF? How did this happen!?? 
+		putlog('err', "The query for " . $asc . "'s asc has returned " . $res->{'name'} . "'s asc.");
+		return(0);
+	}
+
+	unless (open($f, ">$file.asc")) {
+		putlog('err', "Unable to open asc file for writing: $file.asc: $!");
+		return(0);
+	}
+
+	unless (print $f $res->{'pass'}) {
+		putlog('err', "Unable to write the asc to file: $file.asc: $!");
+		return(0);
+	}
+
+	unless (close($f)) {
+		putlog('err', "Unable to save the asc file after writing: $file.asc: $!");
+		return(0);
+	}
+
+	putlog('debug', "Keys for $asc successfully fetched from database.");
+
+	return(1);
+}
+
+sub encrypt_asc ($$$$) {
+	my($asc) = $_[0];
+	my($user) = $_[1];
+	my($pass) = $_[2];
+	my($key) = $_[3];
+	my($p, $file, $buf, $ret);
+	my(@keys, @files);
+
+	putlog('debug', "Encrypting asc file for $asc ...");
+
+	$asc =~ /^(.*)$/;
+	$file = md5_hex($1);
+	
+	unless ( -f "$file.asc") {
+		fetch_asc($asc);
+	}
+
+	if ( -f "$file.asc") {
+		putlog('debug', "Encrypting asc file for $asc exists so decrypting...");
+		unless ($buf = decrypt_asc($user, $pass, $asc)) {
+			return(0);
+		}
+		# if we're adding to the key, trim what exists and append
+		if ($key) { 
+			if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
+				$buf = $1;
+			}
+			$key = $buf . $key;
+		} else {
+			$key = $buf;
+		}
+	}
+
+	return(0) unless (@keys = import_keys($asc));
+	foreach (@keys) {
+		push(@files, "-r", $_);
 	}
 
 	$buf = open($p, "|-");
 
 	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for encryption: $!");
-		print STDERR "Error: unable to fork gpg for encryption: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for encryption: $ret");
+		print STDERR "Error: unable to fork gpg for encryption: $ret\n";
 		return(0);
 	} elsif ($buf == 0) {
 		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '-a', '--encrypt', '--always-trust', 
+		}       
+		putlog('debug', join(" ", ('gpg', '-a', '--yes', '--encrypt', '--always-trust', 
 			'--no-secmem-warning',
-			@pub, '-o', $file);
-		putlog('err',  "Error: unable to exec gpg for encryption: $!");
-		print STDERR "Error: unable to exec gpg for encryption: $!\n";
+			@files, '-o', "$file.asc")));
+		{ exec {'gpg'} ('gpg', '-a', '--yes', '--encrypt', '--always-trust', 
+			'--no-secmem-warning',
+			@files, '-o', "$file.asc"); };
+		$ret = $!;
+		putlog('err',  "Error: unable to exec gpg for encryption: $ret");
+		print STDERR "Error: unable to exec gpg for encryption: $ret\n";
 		exit(1);
 	}
 
@@ -1077,71 +2217,85 @@ sub encrypt_asc ($$@) {
 		return(0);
 	}
 
+	return(0) unless save_asc($asc);
+
 	return(1);
 }
 
 sub decrypt_asc ($$$) {
-	my($usr) = $_[0];
-	my($key) = $_[1];
-	my($file) = $_[2];
-	my($buf, $out);
-	my($p) = gensym;
-	my($r) = gensym;
-	my($w) = gensym;
+	my($user) = $_[0];
+	my($pass) = $_[1];
+	my($asc) = $_[2];
+	my($buf, $out, $ret);
+	my($userfile, $ascfile);
+	my($p, $r, $w);
 	local($/) = undef;
 
-	$file .= ".asc" unless ($file =~ /\.asc$/);
+	$asc =~ /^(.*)$/;
+	$ascfile = md5_hex($1);
 
-	unless ( -f $file) {
-		putlog('err',  "Error: no key file for $file");
-		print STDERR "Error: no key file for $file\n";
-		return(undef);
-	}
+	$user =~ /^(.*)$/;
+	$userfile = md5_hex($user = $1);
+
+	putlog('debug', "Decrypting asc for $asc from $ascfile.asc ...");
 
 	unless (pipe($r, $w)) {
-		putlog('err',  "Error: unable to create password channel: $!");
-		print STDERR "Error: unable to create password channel: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to create password channel: $ret");
+		print STDERR "Error: unable to create password channel: $ret\n";
 		return(undef);
 	}
 	unless (fcntl($r, F_GETFD, $buf)) {
-		putlog('err',  "Error: unable to F_GETFD on password channel: $!");
-		print STDERR "Error: unable to F_GETFD on password channel: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to F_GETFD on password channel: $ret");
+		print STDERR "Error: unable to F_GETFD on password channel: $ret\n";
 	}
 	$buf &= FD_CLOEXEC;
 	unless (fcntl($r, F_SETFD, $buf)) {
-		putlog('err',  "Error: unable to F_SETFD on password channel: $!");
-		print STDERR "Error: unable to F_SETFD on password channel: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to F_SETFD on password channel: $ret");
+		print STDERR "Error: unable to F_SETFD on password channel: $ret\n";
 	}
 
 	$buf = open($p, "-|");
 
 	unless (defined($buf)) {
-		putlog('err',  "Error: unable to fork gpg for decryption: $!");
-		print STDERR "Error: unable to fork gpg for decryption: $!\n";
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for decryption: $ret");
+		print STDERR "Error: unable to fork gpg for decryption: $ret\n";
 		return(undef);
 	} elsif ($buf == 0) {
 		unless (($DEBUG) || (close(STDIN) && open(STDIN, "</dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stdin to /dev/null: $!\n";
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stdin to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stdin to /dev/null: $ret\n";
 			exit(1);
-		}	
+		}       
 		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
-			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $!");
-			print STDERR "Error: unable to map gpg's stderr to /dev/null: $!\n";
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
-		}	
-		exec {'gpg'} ('gpg', '--decrypt', 
-			'--no-tty', '--passphrase-fd', fileno($r),
+		}       
+		putlog('debug', join(" ", ('gpg', '--decrypt', 
+			'--no-tty', '--passphrase-fd', fileno($r), '--batch',
 			'--no-secmem-warning', '--no-default-keyring',
-			'--secret-keyring', "$usr.sec",
-			'--keyring', "$usr.pub", '-u', "$usr",
-			"$file");
-		putlog('err',  "Error: unable to exec gpg for decryption: $!");
-		print STDERR "Error: unable to exec gpg for decryption: $!\n";
+			'--secret-keyring', "$userfile.sec",
+			'--keyring', "$userfile.pub", '-u', "$user",
+			"$ascfile.asc")));
+		{ exec {'gpg'} ('gpg', '--decrypt', 
+			'--no-tty', '--passphrase-fd', fileno($r), '--batch',
+			'--no-secmem-warning', '--no-default-keyring',
+			'--secret-keyring', "$userfile.sec",
+			'--keyring', "$userfile.pub", '-u', "$user",
+			"$ascfile.asc"); };
+		$ret = $!;
+		putlog('err',  "Error: unable to exec gpg for decryption: $ret");
+		print STDERR "Error: unable to exec gpg for decryption: $ret\n";
 		exit(1);
 	}
 
-	print $w "$key\n";
+	print $w "$pass\n";
 	close($w);
 
 	$out = <$p>;
@@ -1159,37 +2313,540 @@ sub decrypt_asc ($$$) {
 	$buf = $? >> 8;
 	return(undef) if ($buf != 0);
 
+	putlog('debug', "Succesfully decrypted asc for $asc from $ascfile.asc");
+
 	return($out);
 }
 
-sub delete_asc ($) {
-	my($file) = $_[0];
+sub import_keys ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res, $ret, $buf);
+	my(%mbrs, @files);
 
-	$file .= ".asc" unless ($file =~ /\.asc$/);
+	# get all the allowed groups and users
+	# turn all the allowed groups into users
+	# get all the denie/pd groups and users
+	# turn all the denied groups into users
+	# substract denied users from allowed users
+	# add 'root' to allowed users
+	# fetch keys for all allowed users
+	# import fetched kets into the keyring
 
-	unless ( -f $file) {
-		putlog('err',  "Error: no asc key for $file");
-		print STDERR "Error: no asc key for $file\n";
-		return(undef);
+	putlog('debug', "Import gpg keys for users with access to $asc ...");
+	
+	putlog('debug', "Fetching allowed members for $asc from database...");
+
+	$sql = "SELECT member FROM ascmbrs WHERE name = '$asc' && flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query of allowed members for $asc:" . $DBHAND->errstr);
+		return(0);
 	}
 
-	unless (unlink($file)) {
-		putlog('err',  "Warning: unable to asc key: $file: $!");
-		print STDERR "Warning: unable to asc key: $file: $!\n";
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query of allowed members for $asc:" . $qry->errstr);
+		return(0);
 	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		if ($res->{'member'} =~ /^@/) {
+			foreach (get_group_mbrs($res->{'member'})) {
+				$mbrs{$_} = 1;
+			}
+		} else {
+			$mbrs{$res->{'member'}} = 1;
+		}
+	}
+
+	putlog('debug', "Fetching denied members for $asc from database...");
+
+	$sql = "SELECT member FROM ascmbrs WHERE name = '$asc' && flag = '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query of denied members for $asc:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query of denied members for $asc:" . $qry->errstr);
+		return(0);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		if ($res->{'member'} =~ /^@/) {
+			foreach (get_group_mbrs($res->{'member'})) {
+				delete($mbrs{$_});
+			}
+		} else {
+			delete($mbrs{$res->{'member'}});
+		}
+	}
+
+	$mbrs{'root'} = 1;
+		
+	foreach (keys %mbrs) {
+		push(@files, md5_hex($_) . ".pub") if fetch_keys($_);
+	}
+
+	unless (( ! -e 'pubring.gpg') || unlink('pubring.gpg')) {
+		$ret = $!;
+		putlog('err',  "Error: unable to unlink existing pubring.gpg: $ret");
+		print STDERR "Error: unable to unlink existing pubring.gpg: $ret\n";
+		return(());
+	}
+	unless (( ! -e 'secring.gpg') || unlink('secring.gpg')) {
+		$ret = $!;
+		putlog('err',  "Error: unable to unlink existing secring.gpg: $ret");
+		print STDERR "Error: unable to unlink existing secring.gpg: $ret\n";
+		return(());
+	}
+
+	$buf = fork();
+
+	unless (defined($buf)) {
+		$ret = $!;
+		putlog('err',  "Error: unable to fork gpg for import: $ret");
+		print STDERR "Error: unable to fork gpg for import: $ret\n";
+		return(());
+	} elsif ($buf == 0) {
+		close(STDIN) && open(STDIN, "</dev/null");
+		unless (($DEBUG) || (close(STDERR) && open(STDERR, ">/dev/null"))) {
+			$ret = $!;
+			putlog('err',  "Error: unable to map gpg's stderr to /dev/null: $ret");
+			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
+			exit(1);
+		}       
+		putlog('debug', join(" ", ('gpg', '--fast-import', '--no-secmem-warning', @files)));
+		{ exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @files); };
+		$ret = $!;
+		putlog('err',  "Error: unable to exec gpg for import: $ret");
+		print STDERR "Error: unable to exec gpg for import: $ret\n";
+		exit(1);
+	}
+
+	$buf = waitpid($buf, 0);
+
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: importing gpg process was killed: $buf");
+		print STDERR "Error: importing gpg process was killed: $buf\n";
+		return(());
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: importing process returned non-zero: $buf");
+		print STDERR "Error: importing gpg process returned non-zero: $buf\n";
+		return(());
+	}
+
+	return(keys %mbrs);
+}
+
+sub fetch_asc ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res);
+	my($f, $file);
+
+	$asc =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	putlog('debug', "Fetching ascs for $asc from database to $file.asc");
+
+	$sql = "SELECT * FROM ascs WHERE name = '$asc'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s ascs: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s ascs: " . $qry->errstr);
+		return(0);
+	}
+
+	$res = $qry->fetchrow_hashref();
+
+	unless (defined($res)) {
+		putlog('notice', "No ascs for $asc are present in the database.");
+		return(0);
+	}
+
+	unless ($res->{'name'} eq $asc) {
+		# WTF? How did this happen!?? 
+		putlog('err', "The query for " . $asc . "'s ascs has returned " . $res->{'name'} . "'s ascs.");
+		return(0);
+	}
+
+	unless (open($f, ">$file.asc")) {
+		putlog('err', "Unable to open asc file for writing: $file.asc: $!");
+		return(0);
+	}
+
+	unless (print $f $res->{'pass'}) {
+		putlog('err', "Unable to write the asc to file: $file.asc: $!");
+		return(0);
+	}
+
+	unless (close($f)) {
+		putlog('err', "Unable to save the asc file after writing: $file.asc: $!");
+		return(0);
+	}
+
+	putlog('debug', "asc for $asc successfully fetched to $file.asc");
 
 	return(1);
 }
 
-sub putlog ($$) {
-	my($pri) = $_[0];
-	my($msg) = $_[1];
+sub save_asc ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res, $pass);
+	my($f, $file);
 
-	chomp($msg);
-	$msg =~ s/([\000-\011\013-\037])/sprintf("\\%03o", unpack("C", $1))/eg;
+	putlog('debug', "Saving ascs for $asc in database...");
 
-	openlog($ARGV0, 'ndelay,pid', 'authpriv');
-	setlogsock('unix');
-	syslog($pri, "%s", $msg);
-	closelog();
+	$asc =~ /^(.*)$/;
+	$file = md5_hex($1);
+
+	unless (open($f, "<$file.asc")) {
+		putlog('err', "Unable to open asc file for reading: $file.asc: $!");
+		return(0);
+	}
+
+	$pass = join("",  (<$f>));
+
+	close($f);
+
+	$sql = "REPLACE INTO ascs VALUES ( ?, ?, NULL)";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to save " . $asc . "'s asc: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute($asc, $pass)) {
+		putlog('err', "Unable to execute SQL query to save " . $asc . "'s asc: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "asc for $asc successfully saved database:" . $qry->errstr);
+
+	return(1);
+}
+
+sub delete_asc ($) {
+	my($asc) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Deleting asc $asc from database...");
+
+	$sql = "DELETE FROM ascs WHERE name = '$asc'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to delete asc $asc: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to delete asc $asc: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) affected by query: %s", $qry->rows(), $sql);
+
+	putlog('debug', "Keys for $asc successfully deleted from database.");
+
+	return(1);
+}
+
+sub list_keys ($) {
+	my($pat) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Fetching key list from database...");
+
+	$sql = "SELECT name FROM ascs";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for key listing:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for key listing: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	while ($res = $qry->fetchrow_hashref()) {
+		next unless ($res->{'name'} =~ /$pat/);
+		next unless (check_asc($res->{'name'}));
+		print STDOUT "" . $res->{'name'} . "\n";
+	}
+
+	putlog('debug', "Key list succesfully fetched from database.");
+
+	return(1);
+}
+
+sub get_user_access ($) {
+	my($usr) = $_[0];
+	my($sql, $qry, $res);
+	my(%keys, @grps);
+
+	putlog('debug', "Fetching key access list for $usr from database...");
+
+	putlog('debug', "Fetching group membership for $usr from database...");
+
+	$sql = "SELECT name FROM grpmbrs WHERE member = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s groups: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s groups: " . $qry->errstr);
+		return(0);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		push(@grps, $res->{'name'});
+	}
+
+	foreach (get_group_access(@grps)) {
+		$keys{$_} = 1;
+	}
+
+	putlog('debug', "Fetching key access list for $usr from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '$usr' AND flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s access: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s access: " . $qry->errstr);
+		return(0);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		$keys{$res->{'name'}} = 1;
+	}
+
+
+	foreach (get_group_denies(@grps)) {
+		delete($keys{$_});
+	}
+
+	return(keys(%keys));
+}
+
+sub get_group_mbrs ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+	my(@mbrs);
+
+	putlog('debug', "Fetching member list for $grp from database...");
+
+	$sql = "SELECT member FROM grpmbrs WHERE name = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s members: " . $DBHAND->errstr);
+		return(undef);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s members: " . $qry->errstr);
+		return(undef);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		push(@mbrs, $_);
+	}
+
+	putlog('debug', sprintf "List of %d members for $grp fetched.", scalar(@mbrs));
+
+	return(@mbrs);
+}
+
+sub get_group_access ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+	my(%keys);
+
+	putlog('debug', "Fetching key access list for $grp from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '\@$grp' AND flag != '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s access: " . $DBHAND->errstr);
+		return(undef);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s access: " . $qry->errstr);
+		return(undef);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		$keys{$res->{'name'}} = 1;
+	}
+
+	putlog('debug', sprintf "List of %d allowed keys for $grp fetched.", scalar(keys(%keys)));
+
+	return(keys(%keys));
+}
+
+sub get_group_denies ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+	my(%keys);
+
+	putlog('debug', "Fetching key deny list for $grp from database...");
+
+	$sql = "SELECT name FROM ascmbrs WHERE member = '\@$grp' AND flag = '-'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s denies: " . $DBHAND->errstr);
+		return(undef);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s denies: " . $qry->errstr);
+		return(undef);
+	}
+
+	while ($res = $qry->fetchrow_hashref()) {
+		$keys{$res->{'name'}} = 1;
+	}
+
+	putlog('debug', sprintf "List of %d denied key for $grp fetched.", scalar(keys(%keys)));
+
+	return(keys(%keys));
+}
+
+sub cleanup_user ($) {
+	my($usr) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Deleting references to $usr from from database...");
+
+	$sql = "DELETE FROM ascmbrs WHERE member = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) deleted  from ascmbrs: %s", $qry->rows(), $sql);
+
+	$sql = "DELETE FROM grpmbrs WHERE member = '$usr'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $usr . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $usr . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) deleted  from grpmbrs: %s", $qry->rows(), $sql);
+
+
+	return(1);
+}
+
+sub cleanup_group ($) {
+	my($grp) = $_[0];
+	my($sql, $qry, $res);
+
+	putlog('debug', "Deleting references to $grp from the database...");
+
+	$sql = "DELETE FROM ascmbrs WHERE member = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $grp . "'s denies: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $grp . "'s denies: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) deleted  from ascmbrs: %s", $qry->rows(), $sql);
+
+	$sql = "DELETE FROM grpmbrs WHERE name = '$grp'";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query for group clearing:" . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query for group clearing: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) deleted  from grpmbrs: %s", $qry->rows(), $sql);
+
+	return(1);
+}
+
+sub change_key ($) {
+        my($usr) = $_[0];
+	my($buf, $file, $ret);
+
+	putlog('debug', "Changing password on keys for $usr ...");
+
+	$usr =~ /^(.*)$/;
+	$file = md5_hex($1);
+	
+	unless (( -f "$file.sec") && ( -f "$file.pub")) {
+		return(0) unless (fetch_keys($usr));
+	}
+
+	putlog('debug', join(" ", ('gpg', '-q', 
+		'--no-secmem-warning',
+		'--no-default-keyring',
+		'--keyring', "$file.pub",
+		'--secret-keyring', "$file.sec",
+		'--edit-key', $usr, 'passwd', 'save', 'quit')));
+	system {'gpg'} ('gpg', '-v',
+		'--no-secmem-warning',
+		'--no-default-keyring',
+		'--keyring', "$file.pub",
+		'--secret-keyring', "$file.sec", 
+		'--edit-key', $usr, 'passwd', 'save', 'quit');
+
+	$buf = $? & 127;
+	if ($buf != 0) {
+		putlog('err',  "Error: pass change gpg process was killed: $buf");
+		print STDERR "Error: pass change gpg process was killed: $buf\n";
+		return(0);
+	}
+
+	$buf = $? >> 8;
+	if ($buf != 0) {
+		putlog('err',  "Error: pass change process returned non-zero: $buf");
+		print STDERR "Error: pass change gpg process returned non-zero: $buf\n";
+		return(0);
+	}
+
+	return(0) unless save_keys($usr);
+
+	return(1);
 }
