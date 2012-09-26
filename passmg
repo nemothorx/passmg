@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: perlstub,v 1.6 2001/10/02 06:44:17 matthewm Exp $
+# $Id: passmg,v 2.1 2012/09/26 04:38:05 root Exp root $
 
 # GLOBALS ##################################################################
 
@@ -61,7 +61,7 @@ sub delete_asc($);
 sub list_keys($);
 
 $VER = do {
-	my @r = (q$Revision: 1.6 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.1 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -308,6 +308,17 @@ sub main () {
 		bail(0);
 	}
 
+	# if changing their own password, just let gpg do the work.
+	if (($opts{'change-pass'}) && (!(defined($ARGV[0])))) {
+		unless (($user = getpwuid($UID)) && (change_key($user))) {
+			putlog('err', "Error while changing the password for $user.");
+			print STDERR "Password change failed.\n";
+			bail(1);
+		}
+		putlog('notice', "Successfully changed the password for $user");
+		bail(0);
+	}
+
 	# all other functions reqire authorization of the calling user
 	$pass = get_passwd("Enter your password", 0);
 	unless (($user = getpwuid($UID))
@@ -420,40 +431,36 @@ sub main () {
 		putlog('notice', "Successfully listed users matching pattern: " . $opts{'list-users'});
 		bail(0);
 	} elsif ($opts{'change-pass'}) {
-		if (defined($ARGV[0])) {
-			unless ($OWNER) {
-				putlog('warning', "Attempt to change another user's password  by non-owner");
-				print STDERR "Fatal: only the script owner can run --change-pass for other users.\n";
-				bail(1);
-			}
-			$buf = $ARGV[0];
-			putlog('debug', "Resetting password for $buf by deleting and re-creating keys...");
-			unless (delete_keys($buf)) {
-				putlog('err', "Error while deleting the user key pair for $buf.");
-				print STDERR "Password change failed.\n";
-				bail(1);
-			}
-			unless (create_keys($buf)) {
-				putlog('err', "Error while creating the user key pair for $buf.");
-				print STDERR "Password change failed.\n";
-				bail(1);
-			}
-			foreach (get_user_access($buf)) {	
-				putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
-				unless (encrypt_asc($_, $user, $pass, "")) {
-					putlog('err', "Error while updating the key $_.");
-					print STDERR "Update of $_ failed.\n";
-					$ret = 1;
-				}
-			}
-			bail(1) if ($ret);
-		} else {
-			unless (change_key($user)) {
-				putlog('err', "Error while changing the password for " . change_key($user) . ".");
-				print STDERR "Password change failed.\n";
-				bail(1);
+		unless ($OWNER) {
+			putlog('warning', "Attempt to change another user's password  by non-owner");
+			print STDERR "Fatal: only the script owner can run --change-pass for other users.\n";
+			bail(1);
+		}
+
+		$buf = $ARGV[0];
+		putlog('debug', "Resetting password for $buf by deleting and re-creating keys...");
+		unless (delete_keys($buf)) {
+			putlog('err', "Error while deleting the user key pair for $buf.");
+			print STDERR "Password change failed.\n";
+			bail(1);
+		}
+
+		unless (create_keys($buf)) {
+			putlog('err', "Error while creating the user key pair for $buf.");
+			print STDERR "Password change failed.\n";
+			bail(1);
+		}
+
+		# it's essentially a new key, re-encrypt everything they access
+		foreach (get_user_access($buf)) {	
+			putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
+			unless (encrypt_asc($_, $user, $pass, "")) {
+				putlog('err', "Error while updating the key $_.");
+				print STDERR "Update of $_ failed.\n";
+				$ret = 1;
 			}
 		}
+		bail(1) if ($ret);
 
 		putlog('notice', "Successfully changed the password for $buf");
 		bail(0);
@@ -954,6 +961,12 @@ sub main () {
 		unless (check_asc($ARGV[0])) {
 			putlog('err', "Attempted to decrypt key " . $ARGV[0] . " but it doesn't exist.");
 			print STDERR "Fatal: key " . $ARGV[0] . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless (grep { /^$ARGV[0]$/ } get_user_access($ARGV[0])) {
+			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
+			print STDERR "Error: permission denied.\n";
 			bail(1);
 		}
 
