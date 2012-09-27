@@ -89,7 +89,7 @@ sub main () {
 	my(%opts, $tty, $args);
 	my($pass, $user, $file);
 	my($buf, $ret, $mod, $grp);
-	my(%before, %after);
+	my(%before, %after, %encrypt);
 
 	# save arguments before getops works on them
 	$args = join(" ", $0, @ARGV);
@@ -195,9 +195,13 @@ sub main () {
 
 	# only one long option allowed at a time
 	if ((scalar grep { /../ && defined($opts{$_}) } keys %opts) > 1) {
-		print STDERR "Error: only one function may be specified at once.\n";
+		print STDERR "Error: only one action may be specified at once.\n";
                 show_help();
                 bail(1);
+	} elsif (((scalar grep { /../ && defined($opts{$_}) } keys %opts) < 1) && (!defined($ARGV[0]))) {
+		print STDERR "Error: no action specified.  Nothing to do.\n";
+		show_help();
+		bail(1);
         }
 
         putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
@@ -605,11 +609,7 @@ sub main () {
 			bail(1);
 		}
 
-		putlog('debug', "Getting 'before' list of accessible keys for " . $opts{'add-grp-access'} . " ...");
-		foreach (get_user_access($opts{'add-grp-access'})) {	
-			$before{$_} = 1;
-		}
-
+		%encrypt = ();
 		$ret = 0;
 		foreach $buf (split/,/, $ARGV[0]) {
 			unless (check_keys($buf)) {
@@ -618,29 +618,42 @@ sub main () {
 				$ret = 1;
 				next;
 			}
+
+			%before = ();
+			putlog('debug', "Getting 'before' list of accessible keys for $buf ...");
+			foreach (get_user_access($buf)) {	
+				$before{$_} = 1;
+			}
+
 			unless(add_to_group($opts{'add-grp-access'}, $buf)) {
 				putlog('err', "Error while adding member to " . $opts{'add-grp-access'} . ": $buf");
 				print STDERR "Error: unable to add $buf to group.\n";
 				$ret = 1;
 			}
+
+			%after = ();	
+			putlog('debug', "Getting 'after' list of accessible keys for $buf ...");
+			foreach (get_user_access($buf)) {	
+				$after{$_} = 1;
+			}
+
+			foreach (keys(%before), keys(%after)) {
+				next if (($before{$_}) && ($after{$_}));
+				$encrypt{$_} = 1;
+			}
 		}
 		bail(1) if ($ret);
 
-		putlog('debug', "Getting 'after' list of accessible keys for " . $opts{'add-grp-access'} . " ...");
-		foreach (get_user_access($opts{'add-grp-access'})) {	
-			$after{$_} = 1;
-		}
-
 		$ret = 0;
-		foreach (keys(%before), keys(%after)) {
-			next if (($before{$_}) && ($after{$_}));
-			putlog('debug', "Accesss for " . $opts{'add-grp-access'} . " to $_ has changed.  Re-encrypting...");
+		foreach (keys(%encrypt)) {
+			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
 			unless (encrypt_asc($_, $user, $pass, "")) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
 			}
 		}
+		bail(1) if ($ret);
 
 		putlog('notice', "Members succesfully added to group  " . $opts{'add-grp-access'} . ": $ARGV[0]");
 		print STDOUT "Members succesfully added to " . $opts{'add-grp-access'} . "\n";
@@ -664,42 +677,52 @@ sub main () {
 			bail(1);
 		}
 
-		putlog('debug', "Getting 'before' list of accessible keys for " . $opts{'rem-grp-access'} . " ...");
-		foreach (get_user_access($opts{'rem-grp-access'})) {	
-			$before{$_} = 1;
-		}
 
+		%encrypt = ();
 		$ret = 0;
 		foreach $buf (split/,/, $ARGV[0]) {
 			unless (check_keys($buf)) {
-				putlog('err', "Attempted to remove user $buf from group " . $opts{'add-grp-access'} . " but keys don't exist.");
+				putlog('err', "Attempted to remove user $buf from group " . $opts{'rem-grp-access'} . " but keys don't exist.");
 				print STDERR "Error: keys for $buf don't exist.\n";
 				$ret = 1;
 				next;
 			}
+
+			%before = ();
+			putlog('debug', "Getting 'before' list of accessible keys for $buf ...");
+			foreach (get_user_access($buf)) {	
+				$before{$_} = 1;
+			}
+
 			unless(rem_from_group($opts{'rem-grp-access'}, $buf)) {
 				putlog('err', "Error while removing member from " . $opts{'rem-grp-access'} . ": $buf");
 				print STDERR "Error: unable to add $buf to group.\n";
 				$ret = 1;
 			}
+
+			%after = ();
+			putlog('debug', "Getting 'after' list of accessible keys for $buf ...");
+			foreach (get_user_access($buf)) {	
+				$after{$_} = 1;
+			}
+
+			foreach (keys(%before), keys(%after)) {
+				next if (($before{$_}) && ($after{$_}));
+				$encrypt{$_} = 1;
+			}
 		}
 		bail(1) if ($ret);
 
-		putlog('debug', "Getting 'after' list of accessible keys for " . $opts{'rem-grp-access'} . " ...");
-		foreach (get_user_access($opts{'rem-grp-access'})) {	
-			$after{$_} = 1;
-		}
-
 		$ret = 0;
-		foreach (keys(%before), keys(%after)) {
-			next if (($before{$_}) && ($after{$_}));
-			putlog('debug', "Accesss for " . $opts{'rem-grp-access'} . " to $_ has changed.  Re-encrypting...");
+		foreach (keys(%encrypt)) {
+			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
 			unless (encrypt_asc($_, $user, $pass, "")) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
 			}
 		}
+		bail(1) if ($ret);
 
 		putlog('notice', "Members succesfully removed from group " . $opts{'rem-grp-access'} . ": $ARGV[0]");
 		print STDOUT "Members succesfully removed from group " . $opts{'rem-grp-access'} . "\n";
@@ -964,7 +987,9 @@ sub main () {
 			bail(1);
 		}
 
-		unless (grep { /^$ARGV[0]$/ } get_user_access($ARGV[0])) {
+		$buf = $ARGV[0];
+		putlog('debug', sprintf "Access check: %s", join(", ", grep { /$buf/ } get_user_access($user)));
+		unless ((scalar grep { /\Q$buf\E/ } get_user_access($user)) > 0) {
 			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
 			print STDERR "Error: permission denied.\n";
 			bail(1);
@@ -985,7 +1010,7 @@ sub main () {
 		bail(0);
 	}
 
-	putlog('err', "The end of main() reached.  No action performed?");
+	putlog('err', "The end of main() reached.  No action performed.");
 	print STDERR "Fatal: no action performed.\n";
 	bail(1);
 }
@@ -2334,7 +2359,7 @@ sub decrypt_asc ($$$) {
 sub import_keys ($) {
 	my($asc) = $_[0];
 	my($sql, $qry, $res, $ret, $buf);
-	my(%mbrs, @files);
+	my(%mbrs, $mbr, @files);
 
 	# get all the allowed groups and users
 	# turn all the allowed groups into users
@@ -2362,11 +2387,14 @@ sub import_keys ($) {
 	}
 
 	while ($res = $qry->fetchrow_hashref()) {
-		if ($res->{'member'} =~ /^@/) {
-			foreach (get_group_mbrs($res->{'member'})) {
-				$mbrs{$_} = 1;
+		if ($res->{'member'} =~ s/^@//) {
+			putlog('debug', "Group " . $res->{'member'} . " found with access to $asc ...");
+			foreach $mbr (get_group_mbrs($res->{'member'})) {
+				putlog('debug', "Member $mbr of group " . $res->{'member'} . " has access to $asc ...");
+				$mbrs{$mbr} = 1;
 			}
 		} else {
+			putlog('debug', "User " . $res->{'member'} . " found with access to $asc ...");
 			$mbrs{$res->{'member'}} = 1;
 		}
 	}
@@ -2386,9 +2414,11 @@ sub import_keys ($) {
 	}
 
 	while ($res = $qry->fetchrow_hashref()) {
-		if ($res->{'member'} =~ /^@/) {
-			foreach (get_group_mbrs($res->{'member'})) {
-				delete($mbrs{$_});
+		if ($res->{'member'} =~ s/^@//) {
+			putlog('debug', "Group " . $res->{'member'} . " found is denied from $asc ...");
+			foreach $mbr (get_group_mbrs($res->{'member'})) {
+				putlog('debug', "Member $mbr of group " . $res->{'member'} . " is denied from $asc ...");
+				delete($mbrs{$mbr});
 			}
 		} else {
 			delete($mbrs{$res->{'member'}});
@@ -2396,6 +2426,8 @@ sub import_keys ($) {
 	}
 
 	$mbrs{'root'} = 1;
+
+	putlog('debug', sprintf "List of %d users with access ito $asc found", scalar(keys %mbrs));
 		
 	foreach (keys %mbrs) {
 		push(@files, md5_hex($_) . ".pub") if fetch_keys($_);
@@ -2608,7 +2640,7 @@ sub list_keys ($) {
 sub get_user_access ($) {
 	my($usr) = $_[0];
 	my($sql, $qry, $res);
-	my(%keys, @grps);
+	my(%keys, @grps, $grp);
 
 	putlog('debug', "Fetching key access list for $usr from database...");
 
@@ -2630,8 +2662,12 @@ sub get_user_access ($) {
 		push(@grps, $res->{'name'});
 	}
 
-	foreach (get_group_access(@grps)) {
-		$keys{$_} = 1;
+	putlog('debug', sprintf "List of %d groups for $usr fetched.", scalar(@grps));
+
+	foreach $grp (@grps) {
+		foreach (get_group_access($grp)) {
+			$keys{$_} = 1;
+		}
 	}
 
 	putlog('debug', "Fetching key access list for $usr from database...");
@@ -2653,8 +2689,10 @@ sub get_user_access ($) {
 	}
 
 
-	foreach (get_group_denies(@grps)) {
-		delete($keys{$_});
+	foreach $grp (@grps) {
+		foreach (get_group_denies($grp)) {
+			delete($keys{$_});
+		}
 	}
 
 	return(keys(%keys));
@@ -2680,7 +2718,7 @@ sub get_group_mbrs ($) {
 	}
 
 	while ($res = $qry->fetchrow_hashref()) {
-		push(@mbrs, $_);
+		push(@mbrs, $res->{'member'});
 	}
 
 	putlog('debug', sprintf "List of %d members for $grp fetched.", scalar(@mbrs));
