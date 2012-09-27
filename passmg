@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 2.1 2012/09/26 04:38:05 root Exp root $
+# $Id: passmg,v 2.3 2012/09/27 01:05:54 root Exp $
 
 # GLOBALS ##################################################################
 
@@ -24,44 +24,50 @@ $TERM = $ENV{'TERM'};
 $ENV{'PATH'} = "/usr/bin:/bin";
 $ENV{'TERM'} = $TERM;
 
-
-sub main();
-sub bail($);
-sub show_help();
-sub putlog($$);
+sub main ();
+sub bail ($);
+sub show_help ();
+sub putlog ($$);
 sub connect_db($$$$);
-sub get_passwd($$);
-sub read_config($);
-sub check_keys($);
-sub delete_keys($);
-sub fetch_keys($);
-sub save_keys($);
-sub create_keys($);
-sub check_auth($$);
-sub show_user($);
-sub list_users($);
-sub check_group($);
-sub create_group($);
-sub cleanup_group($);
-sub add_to_group($$);
-sub rem_from_group($$);
-sub delete_group($);
-sub show_group($);
-sub list_groups($);
-sub add_to_asc($$);
-sub rem_from_asc($$);
-sub check_asc($);
-sub fetch_ascs($);
-sub encrypt_asc($$$$);
-sub decrypt_asc($$$);
-sub import_keys($);
-sub fetch_asc($);
-sub save_asc($);
-sub delete_asc($);
-sub list_keys($);
+sub get_passwd ($$);
+sub read_config ($);
+sub check_keys ($);
+sub delete_keys ($);
+sub fetch_keys ($);
+sub save_keys ($);
+sub create_keys ($);
+sub check_auth ($$);
+sub show_user ($);
+sub list_users ($);
+sub check_group ($);
+sub create_group ($);
+sub add_to_group ($$);
+sub rem_from_group ($$);
+sub delete_group ($);
+sub show_group ($);
+sub list_groups ($);
+sub add_to_asc ($$);
+sub rem_from_asc ($$);
+sub show_key ($);
+sub check_asc ($);
+sub fetch_ascs ($);
+sub encrypt_asc ($$$$);
+sub decrypt_asc ($$$);
+sub import_keys ($);
+sub fetch_asc ($);
+sub save_asc ($);
+sub delete_asc ($);
+sub list_keys ($);
+sub get_user_access ($);
+sub get_group_mbrs ($);
+sub get_group_access ($);
+sub get_group_denies ($);
+sub cleanup_user ($);
+sub cleanup_group ($);
+sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.1 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.3 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -104,7 +110,6 @@ sub main () {
 		"D|no-debug" => \$opts{'D'},
 		"c|config:s" => \$opts{'c'},
 		"H|history:i" => \$opts{'H'},
-		"F|filename:s" => \$opts{'F'},
 		"initialise" => \$opts{'initialise'},
 		# --initialise
 		"create-user:s" => \$opts{'create-user'},
@@ -1041,7 +1046,8 @@ sub bail ($) {
 sub show_help () {
 	print STDOUT "$ARGV0 version $VER
 
-usage: $ARGV0 [<opts>]
+usage: $ARGV0 [<opts>] [<key>]
+
 
 -v  show version. will display the RCS rev.
 -h  show help. causes this message to be shown.
@@ -1053,22 +1059,27 @@ usage: $ARGV0 [<opts>]
 
 Only one of:
 
---create-user <name> [desc] [group1][,group2][,group3]...
---delete-user <name>
---show-user <name>
+--create-user <user>
+--delete-user <user>
+--show-user <user>
 --list-users [regex]
---create-group <name> [desc]
---delete-group <name>
---show-group [name]
+--create-group <group> [user1][,user2]...
+--delete-group <group>
+--show-group [group]
 --list-groups [regex]
---create-key <name> [desc] [<+|-><user1|group1>][,<+|-><user2|group2>]...
---delete-key <name>
---change-key <name>
+--add-grp-access <group> <user1>[,user2]...
+--rem-grp-access <group> <user1>[,user2]...
+--create-key <key> [[-]<user1|\@group1>][[-]<user2|\@group2>]...
+--delete-key <key>
+--change-key <key>
 --list-keys [regex]
---show-key <name>    (default action)
---add-key-access <name> <+|-><user1|group1>[,<+|-><user2|group2>]...
---rem-key-access <name> <user1|group1>[,<user2|group2>]...
---change-pass [name]
+--show-key <key>
+--add-key-access <key> <[-]<user1|\@group1>[,[-]<user2|\@group2>]...
+--rem-key-access <key> <user1|\@group1>[,<user2|\@group2>]...
+--change-pass
+
+If none of the above is specified the default action is
+to decrypt the requested key and show the password.
 \n";
 	return();
 }
