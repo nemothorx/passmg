@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 2.4 2012/09/27 01:26:09 root Exp matthewm $
+# $Id: passmg,v 2.5 2012/10/03 00:17:29 matthewm Exp matthewm $
 
 # GLOBALS ##################################################################
 
@@ -67,7 +67,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.4 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.5 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -82,6 +82,11 @@ $DBPASS = 'XXXXXXXXXXXX';
 $DBHAND = undef;
 
 $CFGFILE = undef;
+foreach ( "/etc", "/usr/local/etc/") {
+	next unless ( -f "$_/passmg.cfg");
+	$CFGFILE = "$_/passmg.cfg";
+	last;
+}
 
 $OWNER = 0;
 
@@ -108,7 +113,7 @@ sub main () {
 		"h|help" => \$opts{'h'},
 		"d|debug" => \$opts{'d'},
 		"D|no-debug" => \$opts{'D'},
-		"c|config:s" => \$opts{'c'},
+		"j|config:s" => \$opts{'c'},
 		"H|history:i" => \$opts{'H'},
 		"initialise" => \$opts{'initialise'},
 		# --initialise
@@ -132,7 +137,7 @@ sub main () {
 		#--add-grp-access <name> <member1>[,member2]...
 		"rem-grp-access:s" => \$opts{'rem-grp-access'},
 		#--rem-grp-access <name> <member1>[,member2]...
-		"create-key:s" => \$opts{'create-key'},
+		"a|create-key:s" => \$opts{'create-key'},
 		#--create-key <name> [[-]<user1|group1>][[-]<user2|group2>]...
 		"delete-key:s" => \$opts{'delete-key'},
 		#--delete-key <name>
@@ -739,39 +744,43 @@ sub main () {
 			bail(1);
 		}
 
-		if (defined($ARGV[0])) {
-			$ret = 0;
-			foreach $buf (split/,/, $ARGV[0]) {
-				if ($buf =~ s/^-//) {
-					$mod = "-";
-				} else {
-					$mod = "";
-				}
-				if ($buf =~ s/^\@//) {
-					$grp = "@";
-					unless (check_group($buf)) {
-						putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'create-key'} . " but it doesn't exist.");
-						print STDERR "Error: group " . $buf . " doesn't exist.\n";
-						$ret = 1;
-						next;
-					}
-				} else {
-					unless (check_keys($buf)) {
-						putlog('err', "Attempted to add $mod$buf to key " . $opts{'create-key'} . " but keys don't exist.");
-						print STDERR "Error: user $buf don't exist.\n";
-						$ret = 1;
-						next;
-					}
-					$grp = "";
-				}
-				unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
-					putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
-					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
-					$ret = 1;
-				}
+		unless (defined($ARGV[0])) {
+			print STDERR "Error: no initial access specified for new key.\n";
+	                show_help();
+			bail(1);
+        	}
+
+		$ret = 0;
+		foreach $buf (split/,/, $ARGV[0]) {
+			if ($buf =~ s/^-//) {
+				$mod = "-";
+			} else {
+				$mod = "";
 			}
-			bail(1) if ($ret);
+			if ($buf =~ s/^\@//) {
+				$grp = "@";
+				unless (check_group($buf)) {
+					putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'create-key'} . " but it doesn't exist.");
+					print STDERR "Error: group " . $buf . " doesn't exist.\n";
+					$ret = 1;
+					next;
+				}
+			} else {
+				unless (check_keys($buf)) {
+					putlog('err', "Attempted to add $mod$buf to key " . $opts{'create-key'} . " but keys don't exist.");
+					print STDERR "Error: user $buf don't exist.\n";
+					$ret = 1;
+					next;
+				}
+				$grp = "";
+			}
+			unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
+				putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
+				print STDERR "Error: unable to add $mod$grp$buf to key.\n";
+				$ret = 1;
+			}
 		}
+		bail(1) if ($ret);
 
 		$buf = get_passwd("New password for " . $opts{'create-key'}, 1);
 
@@ -1069,7 +1078,7 @@ Only one of:
 --list-groups [regex]
 --add-grp-access <group> <user1>[,user2]...
 --rem-grp-access <group> <user1>[,user2]...
---create-key <key> [[-]<user1|\@group1>][[-]<user2|\@group2>]...
+--create-key <key> [-]<user1|\@group1>[,[-]<user2|\@group2>]...
 --delete-key <key>
 --change-key <key>
 --list-keys [regex]
