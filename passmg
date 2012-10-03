@@ -1,5 +1,140 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 2.6 2012/10/03 03:39:51 matthewm Exp $
+# $Id: passmg,v 2.7 2012/10/03 04:06:51 matthewm Exp matthewm $
+
+# Password Manager - (C) WebCentral Pty Ltd 
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+# PERL DOC #################################################################
+
+=head1 NAME
+
+B<passmg> - A utility for managing and accessing stored passwords.
+
+=head1 SYNOPSIS
+
+passmg [-h|-v [-d|-D] [-H <int>]
+
+passmg --create-user <username>
+
+passmg --delete-user <username>
+
+passmg --show-user <username>
+
+passmg --create-group <group> [user1][,user2]...
+
+passmg --show-group <group>
+
+passmg --delete-group <group>
+
+passmg --add-grp-access <group> <user1>[,user2]...
+
+passmg --rem-grp-access <group> <user1>[,user2]...
+
+passmg --create-key <key> \
+	[-]<user1|@group1>[,[-]<user2|@group2>]...
+
+passmg --delete-key <key>
+
+passmg --change-key <key>
+
+passmg --show-key <key>
+
+passmg --add-key-access <key> \
+	<[-]<user1|@group1>[,[-]<user2|@group2>]...
+
+passmg --rem-key-access <key> \
+	<user1|@group1>[,<user2|@group2>]...
+
+passmg --list-users <regex>
+
+passmg --list-groups <regex>
+
+passmg --list-keys <regex>
+
+passwd --change-pass [user]
+
+=head1 DESCRIPTION
+
+B<passmg> is a suid perl script designed to lessen the problems of shared/common passwords amongst administators.  Although having passwords being used by multiple individuals is itself a risk, especially when auditing actions performed using that password, it is often an inescapable nessessity.  This problem is further aggrevated by a tendency to change shared passwords very infrequently due largly to the difficulties involved in diseminating the new passwords to all parties in a way that does not itself further compromise it.  
+
+B<passmg> addresses this problem by keeping a central repository of passwords stored in PGP encrypted files.  Each user who has been granted access to the repository has their own PGP public and private key pair.  Each password file is encrypted using all the appropriate public keys meaning each user can access the respository using their own pass phrase.  Access control is determined username and group membership on a per key basis.
+
+When granting or revoking access for a user the master key (root) is used to decrypt and reencrypt all the password files.  This master key is not acutally special in anyway except being associated with the root user.  
+
+=head1 MYSQL SCHEMA
+
+B<passmg> relies on mysql as backend store for both the keys and the tables
+containing the list of users and group and associated access controls.
+
+CREATE TABLE users (
+        name VARCHAR(64) NOT NULL,
+        secret BLOB NOT NULL,
+        public BLOB NOT NULL,
+        updated TIMESTAMP NOT NULL,
+        UNIQUE (name)
+        );
+
+CREATE TABLE groups (
+        name VARCHAR(64) NOT NULL,
+        UNIQUE (name)
+        );
+
+CREATE TABLE ascs (
+        name VARCHAR(64) NOT NULL,
+        pass BLOB NOT NULL,
+        updated TIMESTAMP NOT NULL,
+        UNIQUE (name)
+        );
+
+CREATE TABLE grpmbrs (
+        name VARCHAR(64) NOT NULL,
+        member VARCHAR(64) NOT NULL
+        );
+
+CREATE UNIQUE INDEX grpmbrs_index ON grpmbrs (
+        name, member );
+
+CREATE TABLE ascmbrs (
+        name VARCHAR(64) NOT NULL,
+        member VARCHAR(64) NOT NULL,
+        flag CHAR(1) NOT NULL DEFAULT '+'
+        );
+
+CREATE UNIQUE INDEX ascmbrs_index ON ascmbrs (
+       name, member
+       );
+
+=head1 BUGS
+
+To date this script has only been tested and used on Linux.  It is entirely
+possible it may not work at all on other platforms.
+
+=head1 SEE ALSO
+
+gpg(1)
+
+=head1 VERSION
+
+$Id: passmg,v 1.23 2011/02/11 02:13:32 mpick Exp $
+
+=head1 AUTHOR
+
+Matthew Melvin <matthewm@webcentral.com.au>
+
+=cut
 
 # GLOBALS ##################################################################
 
@@ -67,7 +202,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.6 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.7 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -116,42 +251,23 @@ sub main () {
 		"j|config:s" => \$opts{'c'},
 		"H|history:i" => \$opts{'H'},
 		"initialise" => \$opts{'initialise'},
-		# --initialise
 		"create-user:s" => \$opts{'create-user'},
-		# --create-user <name>
 		"delete-user:s"=> \$opts{'delete-user'},
-		# --delete-user <name>
 		"show-user:s" => \$opts{'show-user'},
-		# --show-user <name>
 		"list-users" => \$opts{'list-users'},
-		# --list-users [regex]
 		"create-group:s" => \$opts{'create-group'},
-		#--create-group <name> [member1][,member2]...
 		"delete-group:s" => \$opts{'delete-group'},
-		#--delete-group <name>
 		"show-group:s" => \$opts{'show-group'},
-		#--show-group [name]
 		"list-groups" => \$opts{'list-groups'},
-		#--list-groups [regex]
 		"add-grp-access:s" => \$opts{'add-grp-access'},
-		#--add-grp-access <name> <member1>[,member2]...
 		"rem-grp-access:s" => \$opts{'rem-grp-access'},
-		#--rem-grp-access <name> <member1>[,member2]...
 		"a|create-key:s" => \$opts{'create-key'},
-		#--create-key <name> [[-]<user1|group1>][[-]<user2|group2>]...
 		"delete-key:s" => \$opts{'delete-key'},
-		#--delete-key <name>
 		"change-key:s" => \$opts{'change-key'},
-		#--change-key <name>
 		"l|list-keys" => \$opts{'list-keys'},
-		#--list-keys [regex]
 		"show-key:s" => \$opts{'show-key'},
-		#--show-key <name>
-		#--add-key-access <name> <+|-><user1|group1>[,<+|-><user2|group2>]...
 		"add-key-access:s" => \$opts{'add-key-access'},
-		#--rem-key-access <name> <user1|group1>[,<user2|group2>]...
 		"rem-key-access:s" => \$opts{'rem-key-access'},
-		#--change-pass
 		"change-pass" => \$opts{'change-pass'},
 	)) {
 		show_help();
