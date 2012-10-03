@@ -1,5 +1,5 @@
 #!/usr/bin/perl -T
-# $Id: passmg,v 2.5 2012/10/03 00:17:29 matthewm Exp matthewm $
+# $Id: passmg,v 2.6 2012/10/03 03:39:51 matthewm Exp $
 
 # GLOBALS ##################################################################
 
@@ -67,7 +67,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.5 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.6 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -252,6 +252,17 @@ sub main () {
 	}
 
 	putlog('debug', "Running as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
+
+	putlog('debug', "Privledges dropped.  Untainting command line...");
+	foreach (keys %opts) {
+		$opts{$_} =~ /(.*)/;
+		$opts{$_} = $1;
+	}
+	foreach ($buf = 0; defined($ARGV[$buf]); $buf++) {
+		$ARGV[$buf] =~ /(.*)/;
+		$ARGV[$buf] = $1;
+	}
+	
 
 	# setup signal handlers to do a clean exit
 	foreach ('HUP', 'INT', 'QUIT', 'TERM') {
@@ -2447,7 +2458,7 @@ sub import_keys ($) {
 
 	$mbrs{'root'} = 1;
 
-	putlog('debug', sprintf "List of %d users with access ito $asc found", scalar(keys %mbrs));
+	putlog('debug', sprintf "List of %d users with access to $asc found", scalar(keys %mbrs));
 		
 	foreach (keys %mbrs) {
 		push(@files, md5_hex($_) . ".pub") if fetch_keys($_);
