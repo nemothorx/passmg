@@ -160,6 +160,7 @@ use Sys::Syslog;
 use File::Temp qw/ tempdir /;
 use Data::Dumper;
 use Digest::MD5 qw/ md5_hex /;
+use MIME::Base64;
 
 use vars qw/ $VER $ARGV0 $DEBUG $TERM /;
 use vars qw/ $DBHOST $DBNAME $DBUSER $DBPASS $DBHAND /;
@@ -1142,6 +1143,10 @@ sub main () {
 				bail(1);
 			}
 			if ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
+				if ($buf =~ /^=\?[^?]+\?B?(.*)\?=/) {
+					$buf = decode_base64($1);
+				}
+				$buf .= "\n" if ($buf !~ /\n$/);
 				push(@out, "######### $upd ########## \n$buf");
 				$ret = 0;
 			} elsif ($ret == 1) {
