@@ -1,5 +1,6 @@
-#!/usr/bin/perl -T
-# $Id: passmg,v 2.8 2012/10/03 05:19:52 matthewm Exp $
+#!/usr/bin/perl
+
+# $Id: passmg,v 2.9 2013/03/27 05:30:06 matthewm Exp matthewm $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -79,6 +80,14 @@ When granting or revoking access for a user the master key (root) is used to dec
 B<passmg> relies on mysql as backend store for both the keys and the tables
 containing the list of users and group and associated access controls.
 
+CREATE DATABASE passmg;
+
+CREATE USER 'passmg'@'localhost' IDENTIFIED by '$PASSWD';
+
+GRANT SELECT, INSERT, UPDATE, DELETE on passmg.* TO 'passmg';
+
+USE passmg;
+
 CREATE TABLE users (
         name VARCHAR(64) NOT NULL,
         secret BLOB NOT NULL,
@@ -95,9 +104,11 @@ CREATE TABLE groups (
 CREATE TABLE ascs (
         name VARCHAR(64) NOT NULL,
         pass BLOB NOT NULL,
-        updated TIMESTAMP NOT NULL,
-        UNIQUE (name)
+        updated TIMESTAMP NOT NULL
         );
+
+CREATE UNIQUE INDEX ascs_index ON ascs (
+        name, updated);
 
 CREATE TABLE grpmbrs (
         name VARCHAR(64) NOT NULL,
@@ -128,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.8 2012/10/03 05:19:52 matthewm Exp $
+$Id: passmg,v 2.9 2013/03/27 05:30:06 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -185,11 +196,11 @@ sub add_to_asc ($$);
 sub rem_from_asc ($$);
 sub show_key ($);
 sub check_asc ($);
-sub fetch_ascs ($);
 sub encrypt_asc ($$$$);
 sub decrypt_asc ($$$);
 sub import_keys ($);
-sub fetch_asc ($);
+sub fetch_asc ($$);
+sub get_updates ($$);
 sub save_asc ($);
 sub delete_asc ($);
 sub list_keys ($);
@@ -202,7 +213,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.8 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.9 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -234,7 +245,7 @@ die "Unreachable code reached";
 sub main () {
 	my(%opts, $tty, $args);
 	my($pass, $user, $file);
-	my($buf, $ret, $mod, $grp);
+	my($buf, $ret, $mod, $grp, @out, $upd);
 	my(%before, %after, %encrypt);
 
 	# save arguments before getops works on them
@@ -295,10 +306,8 @@ sub main () {
         unless ($tty = ttyname(fileno(0))) {
 		$ret = $!;
                 putlog('warning', "Called from non-tty device: $ret");
-                print STDERR "Fatal: stdin is not a tty device: $ret\n";
-                bail(1);
+		$tty = "notty";
         }
-
 
         if (defined($opts{'H'})) {
                 unless (($opts{'H'} > 0) && ($opts{'H'} =~ /^(\d+)$/)) {
@@ -307,12 +316,9 @@ sub main () {
                         bail(1);
                 }
                 $HIST = $1;
-                unless ($opts{'c'}) {
-                        print STDERR "Error: history only valid when changing keys.\n";
-                        show_help();
-                        bail(1);
-                }
         }
+
+	$HIST = 1 if ($HIST < 1);
 
 	# we're going to change working dir, so make the file absolute if it's not already
         if ($opts{'F'}) {
@@ -333,7 +339,13 @@ sub main () {
         putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
         putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
 
-	$OWNER = 1 if ($EUID == $UID);
+	$OWNER = 1;
+	if ($EUID == $UID) {
+		$OWNER = 1;
+		$user = 'root';
+	} else {
+		$user = getpwuid($UID);
+	}
 
 	if ($opts{'c'}) {
 		# drop prives before reading user specified config file
@@ -425,12 +437,6 @@ sub main () {
 			print STDERR "Fatal: only the script owner can run --initilise\n";
 			bail(1);
 		}
-		unless ($user = getpwuid($UID)) {
-			$ret = $!;
-			putlog('err', "Unable to determine username for $UID: $ret\n");
-			print STDERR "Fatal: unable to map uid $UID to a username: $ret\n";
-			bail(1);
-		}
 
 		if (check_keys($user)) {
 			putlog('err', "Attempted to initialise but owner keys already exist.");
@@ -451,7 +457,7 @@ sub main () {
 
 	# if changing their own password, just let gpg do the work.
 	if (($opts{'change-pass'}) && (!(defined($ARGV[0])))) {
-		unless (($user = getpwuid($UID)) && (change_key($user))) {
+		unless (($user) && (change_key($user))) {
 			putlog('err', "Error while changing the password for $user.");
 			print STDERR "Password change failed.\n";
 			bail(1);
@@ -462,9 +468,7 @@ sub main () {
 
 	# all other functions reqire authorization of the calling user
 	$pass = get_passwd("Enter your password", 0);
-	unless (($user = getpwuid($UID))
-		 && (check_keys($user))
-		 && (check_auth($user, $pass))) {
+	unless (($user) && (check_keys($user)) && (check_auth($user, $pass))) {
 		putlog('notice', "Incomplete: Authorization refused.");
 		print STDERR "Authorization refused.\n";
 		bail(1);
@@ -531,7 +535,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%before)) {
 			putlog('debug', "Accesss for " . $opts{'delete-user'} . " to $_ has changed.  Re-encrypting...");
-			unless (encrypt_asc($_, $user, $pass, "")) {
+			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
@@ -595,7 +599,7 @@ sub main () {
 		# it's essentially a new key, re-encrypt everything they access
 		foreach (get_user_access($buf)) {	
 			putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
-			unless (encrypt_asc($_, $user, $pass, "")) {
+			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
@@ -687,7 +691,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%before)) {
 			putlog('debug', "Accesss for " . $opts{'delete-group'} . " to $_ has changed.  Re-encrypting...");
-			unless (encrypt_asc($_, $user, $pass, "")) {
+			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
@@ -784,7 +788,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%encrypt)) {
 			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
-			unless (encrypt_asc($_, $user, $pass, "")) {
+			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
@@ -853,7 +857,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%encrypt)) {
 			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
-			unless (encrypt_asc($_, $user, $pass, "")) {
+			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
 				$ret = 1;
@@ -865,53 +869,49 @@ sub main () {
 		print STDOUT "Members succesfully removed from group " . $opts{'rem-grp-access'} . "\n";
 		bail(0);
 	} elsif ($opts{'create-key'}) {
-		if (check_asc($opts{'create-key'})) {
-			putlog('err', "Attempted to create key " . $opts{'create-key'} . " but it already exist.");
-			print STDERR "Fatal: key " . $opts{'create-key'} . " already exist.\n";
-			bail(1);
-		}
-
-		unless (defined($ARGV[0])) {
-			print STDERR "Error: no initial access specified for new key.\n";
-	                show_help();
-			bail(1);
-        	}
-
-		$ret = 0;
-		foreach $buf (split/,/, $ARGV[0]) {
-			if ($buf =~ s/^-//) {
-				$mod = "-";
-			} else {
-				$mod = "";
-			}
-			if ($buf =~ s/^\@//) {
-				$grp = "@";
-				unless (check_group($buf)) {
-					putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'create-key'} . " but it doesn't exist.");
-					print STDERR "Error: group " . $buf . " doesn't exist.\n";
-					$ret = 1;
-					next;
+		unless (check_asc($opts{'create-key'})) {
+			unless (defined($ARGV[0])) {
+				print STDERR "Error: no initial access specified for new key.\n";
+		                show_help();
+				bail(1);
+	        	}
+	
+			$ret = 0;
+			foreach $buf (split/,/, $ARGV[0]) {
+				if ($buf =~ s/^-//) {
+					$mod = "-";
+				} else {
+					$mod = "";
 				}
-			} else {
-				unless (check_keys($buf)) {
-					putlog('err', "Attempted to add $mod$buf to key " . $opts{'create-key'} . " but keys don't exist.");
-					print STDERR "Error: user $buf don't exist.\n";
-					$ret = 1;
-					next;
+				if ($buf =~ s/^\@//) {
+					$grp = "@";
+					unless (check_group($buf)) {
+						putlog('err', "Attempted to add $mod\@$buf to key " . $opts{'create-key'} . " but it doesn't exist.");
+						print STDERR "Error: group " . $buf . " doesn't exist.\n";
+						$ret = 1;
+						next;
+					}
+				} else {
+					unless (check_keys($buf)) {
+						putlog('err', "Attempted to add $mod$buf to key " . $opts{'create-key'} . " but keys don't exist.");
+						print STDERR "Error: user $buf don't exist.\n";
+						$ret = 1;
+						next;
+					}
+					$grp = "";
 				}
-				$grp = "";
+				unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
+					putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
+					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
+					$ret = 1;
+				}
 			}
-			unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
-				putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
-				print STDERR "Error: unable to add $mod$grp$buf to key.\n";
-				$ret = 1;
-			}
+			bail(1) if ($ret);
 		}
-		bail(1) if ($ret);
 
 		$buf = get_passwd("New password for " . $opts{'create-key'}, 1);
 
-		unless (encrypt_asc($opts{'create-key'}, $user, $pass, $buf)) {
+		unless (encrypt_asc($opts{'create-key'}, $user, undef, $buf)) {
 			putlog('err', "Error while creating the key " . $opts{'create-key'} . ".");
 			print STDERR "Key creation failed.\n";
 			bail(1);
@@ -928,7 +928,7 @@ sub main () {
 		}
 
 		unless ($OWNER) {
-			unless (fetch_asc($opts{'delete-key'})) {
+			unless (fetch_asc($opts{'delete-key'}, undef)) {
 				putlog('err', "Error while fetching key " . $opts{'delete-key'});
 				print STDERR "Error: unable to fetch key " . $opts{'delete-key'} . "\n";
 				bail(1);
@@ -959,7 +959,7 @@ sub main () {
 
 		$buf = get_passwd("New password for " . $opts{'change-key'}, 1);
 
-		unless (encrypt_asc($opts{'change-key'}, $user, $pass, $buf)) {
+		unless (encrypt_asc($opts{'change-key'}, $user, undef, $buf)) {
 			putlog('err', "Error while creating the key " . $opts{'change-key'} . ".");
 			print STDERR "Key creation failed.\n";
 			bail(1);
@@ -1122,32 +1122,40 @@ sub main () {
 	}
 	
 	if ($ARGV[0]) {
+		unless ((scalar grep { /^\Q$ARGV[0]\E$/ } get_user_access($user)) > 0) {
+			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
+			print STDERR "Error: permission denied.\n";
+			bail(1);
+		}
+
 		unless (check_asc($ARGV[0])) {
 			putlog('err', "Attempted to decrypt key " . $ARGV[0] . " but it doesn't exist.");
 			print STDERR "Fatal: key " . $ARGV[0] . " doesn't exist.\n";
 			bail(1);
 		}
 
-		$buf = $ARGV[0];
-		putlog('debug', sprintf "Access check: %s", join(", ", grep { /$buf/ } get_user_access($user)));
-		unless ((scalar grep { /\Q$buf\E/ } get_user_access($user)) > 0) {
-			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
-			print STDERR "Error: permission denied.\n";
-			bail(1);
+		$ret = 1;
+		foreach $upd (get_updates($ARGV[0], $HIST)) {
+			unless (fetch_asc($ARGV[0], $upd)) {
+				putlog('err', "Error while fetching key " . $ARGV[0]);
+				print STDERR "Error: unable to fetch key " . $ARGV[0] . "\n";
+				bail(1);
+			}
+			if ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
+				push(@out, "######### $upd ########## \n$buf");
+				$ret = 0;
+			} elsif ($ret == 1) {
+				# if we have the first key, carry on regardless
+				putlog('err', "Error while decrypting key " . $ARGV[0]);
+				print STDERR "Error: unable to decrypt key " . $ARGV[0] . "\n";
+				bail(1);
+			}
 		}
-
-		unless (fetch_asc($ARGV[0])) {
-			putlog('err', "Error while fetching key " . $ARGV[0]);
-			print STDERR "Error: unable to fetch key " . $ARGV[0] . "\n";
-			bail(1);
+	
+		# reverse the order for the output
+		for ($buf = $#out; $buf >= 0; $buf--) {
+			print $out[$buf];
 		}
-			
-		unless ($buf = decrypt_asc($user, $pass, $ARGV[0])) {
-			putlog('err', "Error while decrypting key " . $ARGV[0]);
-			print STDERR "Error: unable to decrypt key " . $ARGV[0] . "\n";
-			bail(1);
-		}
-		print $buf;
 		bail(0);
 	}
 
@@ -1160,7 +1168,7 @@ sub main () {
 
 sub bail ($) {
 	my($code) = $_[0];
-	my($d, $term);
+	my($d);
 
 	exit($code) if (($DEBUG) && ($code));
 
@@ -1281,15 +1289,19 @@ sub get_passwd ($$) {
 	my($prompt) = $_[0];
 	my($confirm) = $_[1];
 	my($term, $flags);
-	my($buf, $key);
+	my($buf, $key, $tty);
 
-	$term = POSIX::Termios->new();
-
-	$term->getattr(0);
-	$flags = $term->getlflag();
-
-	$term->setlflag($flags &~ (ECHO | ECHOK | ICANON));
-	$term->setattr(0, TCSANOW);
+	if ($tty = ttyname(fileno(0))) {
+		$term = POSIX::Termios->new();
+	
+		$term->getattr(0);
+		$flags = $term->getlflag();
+	
+		$term->setlflag($flags &~ (ECHO | ECHOK | ICANON));
+		$term->setattr(0, TCSANOW);
+	} else {
+		$confirm = 0;
+	}
 
 	$key = 0;
 	while ($buf ne $key) {
@@ -1306,8 +1318,10 @@ sub get_passwd ($$) {
 		}
 	}
 
-	$term->setlflag($flags);
-	$term->setattr(0, TCSANOW);
+	if ($tty) {
+		$term->setlflag($flags);
+		$term->setattr(0, TCSANOW);
+	}
 
 	return($key);
 }
@@ -1329,7 +1343,7 @@ sub read_config ($) {
 
 	unless ($stat[4] == $EUID) {
 		putlog('err', "Insecure owner on config: $cfg: " . scalar getpwuid($stat[4]) . "(" . $stat[4] . ") != " . scalar getpwuid($EUID) . "($EUID)");
-		print STDERR "Error: wrong ownder on config file: $cfg: " . $stat[4] . "\n";
+		print STDERR "Error: wrong owner on config file: $cfg: " . $stat[4] . "\n";
 		return(0);
 	}
 
@@ -2209,7 +2223,7 @@ sub check_asc ($) {
 	$file = md5_hex($1);
 	
 	unless ( -f "$file.asc") {
-		return(0) unless (fetch_asc($asc));
+		return(0) unless (fetch_asc($asc, undef));
 	}
 
 	$buf = open($p, "-|");
@@ -2273,61 +2287,6 @@ sub check_asc ($) {
 	return(1);
 }
 
-sub fetch_ascs ($) {
-	my($asc) = $_[0];
-	my($sql, $qry, $res);
-	my($f, $file);
-
-	putlog('debug', "Fetching asc for $asc from database...");
-
-	$asc =~ /^(.*)$/;
-	$file = md5_hex($1);
-
-	$sql = "SELECT * FROM ascs WHERE name = '$asc'";
-
-	unless ($qry = $DBHAND->prepare($sql)) {
-		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s asc: " . $DBHAND->errstr);
-		return(0);
-	}
-
-	unless ($qry->execute()) {
-		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s asc: " . $qry->errstr);
-		return(0);
-	}
-
-	$res = $qry->fetchrow_hashref();
-
-	unless (defined($res)) {
-		putlog('notice', "No ascs for $asc are present in the database.");
-		return(0);
-	}
-
-	unless ($res->{'name'} eq $asc) {
-		# WTF? How did this happen!?? 
-		putlog('err', "The query for " . $asc . "'s asc has returned " . $res->{'name'} . "'s asc.");
-		return(0);
-	}
-
-	unless (open($f, ">$file.asc")) {
-		putlog('err', "Unable to open asc file for writing: $file.asc: $!");
-		return(0);
-	}
-
-	unless (print $f $res->{'pass'}) {
-		putlog('err', "Unable to write the asc to file: $file.asc: $!");
-		return(0);
-	}
-
-	unless (close($f)) {
-		putlog('err', "Unable to save the asc file after writing: $file.asc: $!");
-		return(0);
-	}
-
-	putlog('debug', "Keys for $asc successfully fetched from database.");
-
-	return(1);
-}
-
 sub encrypt_asc ($$$$) {
 	my($asc) = $_[0];
 	my($user) = $_[1];
@@ -2338,26 +2297,27 @@ sub encrypt_asc ($$$$) {
 
 	putlog('debug', "Encrypting asc file for $asc ...");
 
+	if ((defined($pass) && defined($key))) {
+		putlog('err', sprintf "Error: internal error at %d. This is a bug!", __LINE__);
+		printf STDERR "Error: internal error at %d. This is a bug!\n", __LINE__;
+		return(0);
+	}
+
 	$asc =~ /^(.*)$/;
 	$file = md5_hex($1);
-	
-	unless ( -f "$file.asc") {
-		fetch_asc($asc);
+
+	if (($key) && ( -f "$file.asc")) {
+		unlink("$file.asc");
+	}
+ 
+	if (($pass) && ( ! -f "$file.asc")) {
+			fetch_asc($asc, undef);
 	}
 
 	if ( -f "$file.asc") {
 		putlog('debug', "Encrypting asc file for $asc exists so decrypting...");
-		unless ($buf = decrypt_asc($user, $pass, $asc)) {
+		unless ($key = decrypt_asc($user, $pass, $asc)) {
 			return(0);
-		}
-		# if we're adding to the key, trim what exists and append
-		if ($key) { 
-			if ($buf =~ /(([^\n]+\n){1,$HIST})$/) {
-				$buf = $1;
-			}
-			$key = $buf . $key;
-		} else {
-			$key = $buf;
 		}
 	}
 
@@ -2643,17 +2603,56 @@ sub import_keys ($) {
 	return(keys %mbrs);
 }
 
-sub fetch_asc ($) {
+sub get_updates ($$) {
 	my($asc) = $_[0];
+	my($cnt) = $_[1];
+	my($sql, $qry, $res, @upds);
+
+	$cnt = 1 unless ($cnt);
+
+	putlog('debug', "Fetching update history for $asc from database: $cnt");
+
+	$sql = "SELECT updated FROM ascs WHERE name = '$asc' ORDER BY updated DESC LIMIT $cnt";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s ascs: " . $DBHAND->errstr);
+		return(());
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s ascs: " . $qry->errstr);
+		return(());
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	while ($res = $qry->fetchrow_hashref()) {
+		push(@upds, $res->{'updated'});
+	}
+
+	return(@upds);
+}
+
+sub fetch_asc ($$) {
+	my($asc) = $_[0];
+	my($upd) = $_[1];
 	my($sql, $qry, $res);
 	my($f, $file);
 
 	$asc =~ /^(.*)$/;
 	$file = md5_hex($1);
 
-	putlog('debug', "Fetching ascs for $asc from database to $file.asc");
+	if ($upd) {
+		putlog('debug', "Fetching $upd ascs for $asc from database to $file.asc");
+	} else {
+		putlog('debug', "Fetching most recent ascs for $asc from database to $file.asc");
+	}
 
-	$sql = "SELECT * FROM ascs WHERE name = '$asc'";
+	if ($upd) {
+		$sql = "SELECT * FROM ascs WHERE name = '$asc' AND updated = '$upd'";
+	} else {
+		$sql = "SELECT * FROM ascs WHERE name = '$asc' ORDER BY updated DESC LIMIT 1";
+	}
 
 	unless ($qry = $DBHAND->prepare($sql)) {
 		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s ascs: " . $DBHAND->errstr);
@@ -2717,7 +2716,7 @@ sub save_asc ($) {
 
 	close($f);
 
-	$sql = "REPLACE INTO ascs VALUES ( ?, ?, NULL)";
+	$sql = "INSERT INTO ascs VALUES ( ?, ?, NULL)";
 
 	unless ($qry = $DBHAND->prepare($sql)) {
 		putlog('err', "Unable to prepare SQL query to save " . $asc . "'s asc: " . $DBHAND->errstr);
@@ -2763,7 +2762,7 @@ sub delete_asc ($) {
 
 sub list_keys ($) {
 	my($pat) = $_[0];
-	my($sql, $qry, $res);
+	my($sql, $qry, $res, %seen);
 
 	putlog('debug', "Fetching key list from database...");
 
@@ -2783,8 +2782,10 @@ sub list_keys ($) {
 
 	while ($res = $qry->fetchrow_hashref()) {
 		next unless ($res->{'name'} =~ /$pat/);
+		next if ($seen{$res->{'name'}});
 		next unless (check_asc($res->{'name'}));
 		print STDOUT "" . $res->{'name'} . "\n";
+		$seen{$res->{'name'}} = 1;
 	}
 
 	putlog('debug', "Key list succesfully fetched from database.");
