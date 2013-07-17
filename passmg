@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.9 2013/03/27 05:30:06 matthewm Exp matthewm $
+# $Id: passmg,v 2.11 2013/07/17 04:49:00 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.9 2013/03/27 05:30:06 matthewm Exp matthewm $
+$Id: passmg,v 2.11 2013/07/17 04:49:00 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -214,7 +214,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.9 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.11 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -2746,7 +2746,7 @@ sub delete_asc ($) {
 
 	putlog('debug', "Deleting asc $asc from database...");
 
-	$sql = "DELETE FROM ascs WHERE name = '$asc'";
+	$sql = "DELETE ascs, ascmbrs FROM ascs LEFT JOIN ascmbrs ON ascs.name = ascmbrs.name WHERE ascs.name = '$asc'";
 
 	unless ($qry = $DBHAND->prepare($sql)) {
 		putlog('err', "Unable to prepare SQL query to delete asc $asc: " . $DBHAND->errstr);
