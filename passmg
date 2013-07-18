@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.11 2013/07/17 04:49:00 matthewm Exp $
+# $Id: passmg,v 2.12 2013/07/17 07:57:12 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.11 2013/07/17 04:49:00 matthewm Exp $
+$Id: passmg,v 2.12 2013/07/17 07:57:12 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -214,7 +214,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.11 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.12 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -1244,7 +1244,7 @@ sub putlog ($$) {
 	$msg =~ s/([^\012\040-\176])/sprintf("\\%03o", unpack("C", $1))/eg;
 
 	eval {
-		openlog($ARGV0, 'ndelay,pid', 'mail');
+		openlog($ARGV0, 'ndelay,pid', 'authpriv');
 		syslog($pri, "%s", $msg);
 		closelog();
 	};
