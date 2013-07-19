@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.12 2013/07/17 07:57:12 matthewm Exp $
+# $Id: passmg,v 2.13 2013/07/18 04:23:54 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.12 2013/07/17 07:57:12 matthewm Exp $
+$Id: passmg,v 2.13 2013/07/18 04:23:54 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -214,7 +214,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.12 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.13 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -247,7 +247,7 @@ sub main () {
 	my(%opts, $tty, $args);
 	my($pass, $user, $file);
 	my($buf, $ret, $mod, $grp, @out, $upd);
-	my(%before, %after, %encrypt);
+	my(%before, %after, %encrypt, $owner);
 
 	# save arguments before getops works on them
 	$args = join(" ", $0, @ARGV);
@@ -340,11 +340,11 @@ sub main () {
         putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
         putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
 
-	$OWNER = 1;
 	if ($EUID == $UID) {
 		$OWNER = 1;
 		$user = 'root';
 	} else {
+		$OWNER = 0;
 		$user = getpwuid($UID);
 	}
 
@@ -363,10 +363,12 @@ sub main () {
 		$CFGFILE = $1;
 	}
 
+	$owner = $OWNER;
 	unless(read_config($CFGFILE)) {
 		print STDERR "Fatal: unable to load the config file.\n";
 		bail(1);
 	}
+	$OWNER = $owner;  # don't let owner by set in the config
 
 	# if we still have privleges (ie, we're using the sysytem config) then drop them now
 	unless (($EUID == $UID) && ($EGID == $GID)) {
