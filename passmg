@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.13 2013/07/18 04:23:54 matthewm Exp $
+# $Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp matthewm $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.13 2013/07/18 04:23:54 matthewm Exp $
+$Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -214,7 +214,7 @@ sub cleanup_group ($);
 sub change_key ($);
 
 $VER = do {
-	my @r = (q$Revision: 2.13 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.14 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -1271,15 +1271,7 @@ sub connect_db($$$$) {
 	putlog('debug', "Connecting to $db\@$host as $user ...");
 
         $hand = DBI->connect("DBI:mysql:database=$db;host=$host", $user, $pass, {
-		PrintError => 0,
-		Callbacks => {
-			connected => sub {
-				shift->do(q{
-					SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';
-				});
-				return;
-			},
-		}
+		PrintError => 0
 	});
 
 	unless ($hand) {
