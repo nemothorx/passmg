@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp matthewm $
+# $Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp matthewm $
+$Id: passmg,v 2.14 2013/07/19 00:56:44 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -165,6 +165,7 @@ use MIME::Base64;
 use vars qw/ $VER $ARGV0 $DEBUG $TERM /;
 use vars qw/ $DBHOST $DBNAME $DBUSER $DBPASS $DBHAND /;
 use vars qw/ $CFGFILE $TEMPDIR $OWNER $HIST /;
+use vars qw/ $TTYFLAGS $TERMIOS /;
 
 $TERM = $ENV{'TERM'};
 %ENV = ();
@@ -212,6 +213,7 @@ sub get_group_denies ($);
 sub cleanup_user ($);
 sub cleanup_group ($);
 sub change_key ($);
+sub read_passfile($);
 
 $VER = do {
 	my @r = (q$Revision: 2.14 $ =~ /\d+/g);
@@ -237,6 +239,9 @@ foreach ( "/etc", "/usr/local/etc/") {
 
 $OWNER = 0;
 
+$TERMIOS = undef;
+$TTYFLAGS = undef;
+
 main();
 
 die "Unreachable code reached";
@@ -255,7 +260,7 @@ sub main () {
 	$args = $1;
 
 	Getopt::Long::Configure ("bundling");
-	unless(Getopt::Long::GetOptions(
+	unless (Getopt::Long::GetOptions(
 		"v|version" =>\$opts{'v'},
 		"h|help" => \$opts{'h'},
 		"d|debug" => \$opts{'d'},
@@ -281,6 +286,7 @@ sub main () {
 		"add-key-access:s" => \$opts{'add-key-access'},
 		"rem-key-access:s" => \$opts{'rem-key-access'},
 		"change-pass" => \$opts{'change-pass'},
+		"f|from-file:s" => \$opts{'f'},
 	)) {
 		show_help();
 		bail(1);
@@ -364,7 +370,7 @@ sub main () {
 	}
 
 	$owner = $OWNER;
-	unless(read_config($CFGFILE)) {
+	unless (read_config($CFGFILE)) {
 		print STDERR "Fatal: unable to load the config file.\n";
 		bail(1);
 	}
@@ -408,6 +414,12 @@ sub main () {
 		putlog('err',  "Fatal: unable to set umask to 077: $ret");
 		print STDERR "Fatal: unable to set umask to 077: $ret\n";
 		bail(1);
+	}
+
+	# if we intend reading from a file, we need to make the path
+	# absolute before we change working directory.
+	if ((defined($opts{'f'})) && ($opts{'f'} !~ m!^/!)) {
+		$opts{'f'} = sprintf "%s/%s", getcwd(), $opts{'f'};
 	}
 
 	eval { $TEMPDIR = tempdir("$ARGV0.XXXXXX", DIR => "/var/tmp/" ); };
@@ -646,7 +658,7 @@ sub main () {
 					$ret = 1;
 					next;
 				}
-				unless(add_to_group($opts{'create-group'}, $buf)) {
+				unless (add_to_group($opts{'create-group'}, $buf)) {
 					putlog('err', "Error while setting up initial member of " . $opts{'create-group'} . ": $buf");
 					print STDERR "Error: unable to add $buf to group.\n";
 					$ret = 1;
@@ -769,7 +781,7 @@ sub main () {
 				$before{$_} = 1;
 			}
 
-			unless(add_to_group($opts{'add-grp-access'}, $buf)) {
+			unless (add_to_group($opts{'add-grp-access'}, $buf)) {
 				putlog('err', "Error while adding member to " . $opts{'add-grp-access'} . ": $buf");
 				print STDERR "Error: unable to add $buf to group.\n";
 				$ret = 1;
@@ -838,7 +850,7 @@ sub main () {
 				$before{$_} = 1;
 			}
 
-			unless(rem_from_group($opts{'rem-grp-access'}, $buf)) {
+			unless (rem_from_group($opts{'rem-grp-access'}, $buf)) {
 				putlog('err', "Error while removing member from " . $opts{'rem-grp-access'} . ": $buf");
 				print STDERR "Error: unable to add $buf to group.\n";
 				$ret = 1;
@@ -903,7 +915,7 @@ sub main () {
 					}
 					$grp = "";
 				}
-				unless(add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
+				unless (add_to_asc($opts{'create-key'}, "$mod$grp$buf")) {
 					putlog('err', "Error while granting initial access to " . $opts{'create-key'} . ": $mod$grp$buf");
 					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
 					$ret = 1;
@@ -912,7 +924,15 @@ sub main () {
 			bail(1) if ($ret);
 		}
 
-		$buf = get_passwd("New password for " . $opts{'create-key'}, 1);
+		if ($opts{'f'}) {
+			unless ($buf = read_passfile($opts{'f'})) {
+				putlog('err', "Failed to read the password from file: " . $opts{'f'});
+				print STDERR "Error: failed to read from file: " . $opts{'f'} . "\n";
+				bail(1);
+			} 
+		} else {
+			$buf = get_passwd("New password for " . $opts{'create-key'}, 1);
+		}
 
 		unless (encrypt_asc($opts{'create-key'}, $user, undef, $buf)) {
 			putlog('err', "Error while creating the key " . $opts{'create-key'} . ".");
@@ -960,7 +980,15 @@ sub main () {
 			bail(1);
 		}
 
-		$buf = get_passwd("New password for " . $opts{'change-key'}, 1);
+		if ($opts{'f'}) {
+			unless ($buf = read_passfile($opts{'f'})) {
+				putlog('err', "Error while reading the password from file: " . $opts{'f'});
+				print STDERR "Error: unable to read from file: " . $opts{'f'} . "\n";
+				bail(1);
+			} 
+		} else {
+			$buf = get_passwd("New password for " . $opts{'change-key'}, 1);
+		}
 
 		unless (encrypt_asc($opts{'change-key'}, $user, undef, $buf)) {
 			putlog('err', "Error while creating the key " . $opts{'change-key'} . ".");
@@ -1030,7 +1058,7 @@ sub main () {
 					}
 					$grp = "";
 				}
-				unless(add_to_asc($opts{'add-key-access'}, "$mod$grp$buf")) {
+				unless (add_to_asc($opts{'add-key-access'}, "$mod$grp$buf")) {
 					putlog('err', "Error while granting access to " . $opts{'add-key-access'} . ": $mod$grp$buf");
 					print STDERR "Error: unable to add $mod$grp$buf to key.\n";
 					$ret = 1;
@@ -1089,7 +1117,7 @@ sub main () {
 					}
 					$grp = "";
 				}
-				unless(rem_from_asc($opts{'rem-key-access'}, "$grp$buf")) {
+				unless (rem_from_asc($opts{'rem-key-access'}, "$grp$buf")) {
 					putlog('err', "Error while granting access to " . $opts{'rem-key-access'} . ": $grp$buf");
 					print STDERR "Error: unable to add $grp$buf to key.\n";
 					$ret = 1;
@@ -1177,6 +1205,12 @@ sub bail ($) {
 	my($code) = $_[0];
 	my($d);
 
+	if (defined($TERMIOS)) {
+		$TERMIOS->setlflag($TTYFLAGS);
+		$TERMIOS->setattr(0, TCSANOW);
+		$TERMIOS = undef;
+	}
+
 	exit($code) if (($DEBUG) && ($code));
 
 	if ((defined($TEMPDIR)) && ( -d $TEMPDIR)) {
@@ -1207,6 +1241,10 @@ usage: $ARGV0 [<opts>] [<key>]
 -D  no debug.  disable more verbose logging.
 
 -H <int>   Number of history entires to keep.
+
+--from-file <file>
+      Read the key phrase to be encypted from the specified file.
+      For use with the --change-key and --create-key options.
 
 Only one of:
 
@@ -1271,7 +1309,15 @@ sub connect_db($$$$) {
 	putlog('debug', "Connecting to $db\@$host as $user ...");
 
         $hand = DBI->connect("DBI:mysql:database=$db;host=$host", $user, $pass, {
-		PrintError => 0
+		PrintError => 0,
+		Callbacks => {
+			connected => sub {
+				shift->do(q{
+					SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';
+				});
+				return;
+			},
+		}
 	});
 
 	unless ($hand) {
@@ -1287,17 +1333,16 @@ sub connect_db($$$$) {
 sub get_passwd ($$) {
 	my($prompt) = $_[0];
 	my($confirm) = $_[1];
-	my($term, $flags);
-	my($buf, $key, $tty);
+	my($buf, $key);
 
-	if ($tty = ttyname(fileno(0))) {
-		$term = POSIX::Termios->new();
+	if (ttyname(fileno(0))) {
+		$TERMIOS = POSIX::Termios->new();
 	
-		$term->getattr(0);
-		$flags = $term->getlflag();
+		$TERMIOS->getattr(0);
+		$TTYFLAGS = $TERMIOS->getlflag();
 	
-		$term->setlflag($flags &~ (ECHO | ECHOK | ICANON));
-		$term->setattr(0, TCSANOW);
+		$TERMIOS->setlflag($TTYFLAGS &~ (ECHO | ECHOK | ICANON));
+		$TERMIOS->setattr(0, TCSANOW);
 	} else {
 		$confirm = 0;
 	}
@@ -1317,12 +1362,54 @@ sub get_passwd ($$) {
 		}
 	}
 
-	if ($tty) {
-		$term->setlflag($flags);
-		$term->setattr(0, TCSANOW);
+	if (defined($TERMIOS)) {
+		$TERMIOS->setlflag($TTYFLAGS);
+		$TERMIOS->setattr(0, TCSANOW);
+		$TERMIOS = undef;
 	}
 
 	return($key);
+}
+
+sub read_passfile ($) {
+	my($file) = $_[0];
+	my($f, $buf, $cnt);
+
+	unless ( -s $file) {
+		putlog('err', "Pass file contains no data: $file");
+		print STDERR "Error: the pass file contains no data: $file\n";
+		return(undef);
+	}
+
+	unless (open($f, "<$file")) {
+		putlog('err', "Unable to open pass file: $file: $!");
+		putlog STDERR "Error: unable to open pass file: $file: $!\n";
+		return(undef);
+	}
+
+	while (<$f>) {
+		$buf .= $_;
+		$cnt++;
+	}
+
+	close($f);
+
+	if ($cnt == 1) {
+		chomp($buf);
+	}
+
+	if (length($buf) < 1) {
+		putlog('err', "No data read from the pass file: $file");
+		putlog STDERR "Error: no data read from pass file: $file\n";
+		return(undef);
+	}
+
+        if ($buf =~ /([^\020-\176])/) {
+                $buf = encode_base64($buf, "");
+                $buf = "=?us-ascii?B?$buf?="
+        }
+
+	return($buf);
 }
 
 sub read_config ($) {
