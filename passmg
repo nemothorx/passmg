@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.16 2014/01/14 05:02:07 matthewm Exp matthewm $
+# $Id: passmg,v 2.17 2014/01/14 06:15:59 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.16 2014/01/14 05:02:07 matthewm Exp matthewm $
+$Id: passmg,v 2.17 2014/01/14 06:15:59 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -216,7 +216,7 @@ sub change_key ($);
 sub read_passfile($);
 
 $VER = do {
-	my @r = (q$Revision: 2.16 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.17 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -418,7 +418,7 @@ sub main () {
 
 	# if we intend reading from a file, we need to make the path
 	# absolute before we change working directory.
-	if ((defined($opts{'f'})) && ($opts{'f'} !~ m!^/!)) {
+	if ($opts{'f'} && ($opts{'f'} !~ m!^/!)) {
 		$opts{'f'} = sprintf "%s/%s", getcwd(), $opts{'f'};
 	}
 
@@ -1392,7 +1392,7 @@ sub read_passfile ($) {
 
 	if (length($buf) < 1) {
 		putlog('err', "No data read from the pass file: $file");
-		putlog STDERR "Error: no data read from pass file: $file\n";
+		print STDERR "Error: no data read from pass file: $file\n";
 		return(undef);
 	}
 
