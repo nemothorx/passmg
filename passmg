@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.17 2014/01/14 06:15:59 matthewm Exp $
+# $Id: passmg,v 2.18 2014/01/14 06:34:10 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.17 2014/01/14 06:15:59 matthewm Exp $
+$Id: passmg,v 2.18 2014/01/14 06:34:10 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -216,7 +216,7 @@ sub change_key ($);
 sub read_passfile($);
 
 $VER = do {
-	my @r = (q$Revision: 2.17 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.18 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -292,6 +292,31 @@ sub main () {
 		bail(1);
 	}
 
+        putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
+        putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
+
+	if ($opts{'c'}) {
+		# drop prives before reading user specified config file
+		($EUID, $EGID) = ($UID, $GID);
+		unless (($EUID == $UID) && ($EGID == $GID)) {
+			$ret = $!;
+			putlog('debug', "Dropping privleges before config read failed: $EUID/$EGID <=> $UID/$GID: $ret");
+			print STDERR "Fatal: dropping elevated privledges failed: $ret\n";
+			bail(1);
+		}
+		putlog('debug', "Dropping privledges to read user config: " . getpwuid($EUID) . "/" . getgrgid($EGID));
+		$CFGFILE = $opts{'c'};
+		$CFGFILE =~ /(.+)/;
+		$CFGFILE = $1;
+	}
+
+	$owner = $OWNER;
+	unless (read_config($CFGFILE)) {
+		print STDERR "Fatal: unable to load the config file.\n";
+		bail(1);
+	}
+	$OWNER = $owner;  # don't let owner by set in the config
+
 	if (($opts{'D'}) && ($opts{'d'})) {
 		print STDERR "Conflicting debug options provided.  Both -D and -d specified.\n";
         	show_help();
@@ -343,8 +368,6 @@ sub main () {
 		bail(1);
         }
 
-        putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
-        putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
 
 	if ($EUID == $UID) {
 		$OWNER = 1;
@@ -353,28 +376,6 @@ sub main () {
 		$OWNER = 0;
 		$user = getpwuid($UID);
 	}
-
-	if ($opts{'c'}) {
-		# drop prives before reading user specified config file
-		($EUID, $EGID) = ($UID, $GID);
-		unless (($EUID == $UID) && ($EGID == $GID)) {
-			$ret = $!;
-			putlog('debug', "Dropping privleges before config read failed: $EUID/$EGID <=> $UID/$GID: $ret");
-			print STDERR "Fatal: dropping elevated privledges failed: $ret\n";
-			bail(1);
-		}
-		putlog('debug', "Dropping privledges to read user config: " . getpwuid($EUID) . "/" . getgrgid($EGID));
-		$CFGFILE = $opts{'c'};
-		$CFGFILE =~ /(.+)/;
-		$CFGFILE = $1;
-	}
-
-	$owner = $OWNER;
-	unless (read_config($CFGFILE)) {
-		print STDERR "Fatal: unable to load the config file.\n";
-		bail(1);
-	}
-	$OWNER = $owner;  # don't let owner by set in the config
 
 	# if we still have privleges (ie, we're using the sysytem config) then drop them now
 	unless (($EUID == $UID) && ($EGID == $GID)) {
