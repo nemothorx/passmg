@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.18 2014/01/14 06:34:10 matthewm Exp $
+# $Id: passmg,v 2.19 2014/05/13 05:18:54 matthewm Exp matthewm $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.18 2014/01/14 06:34:10 matthewm Exp $
+$Id: passmg,v 2.19 2014/05/13 05:18:54 matthewm Exp matthewm $
 
 =head1 AUTHOR
 
@@ -216,7 +216,7 @@ sub change_key ($);
 sub read_passfile($);
 
 $VER = do {
-	my @r = (q$Revision: 2.18 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.19 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
@@ -1154,15 +1154,15 @@ sub main () {
 	}
 	
 	if ($ARGV[0]) {
-		unless ((scalar grep { /^\Q$ARGV[0]\E$/ } get_user_access($user)) > 0) {
-			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
-			print STDERR "Error: permission denied.\n";
-			bail(1);
-		}
-
 		unless (check_asc($ARGV[0])) {
 			putlog('err', "Attempted to decrypt key " . $ARGV[0] . " but it doesn't exist.");
 			print STDERR "Fatal: key " . $ARGV[0] . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless ((scalar grep { /^\Q$ARGV[0]\E$/ } get_user_access($user)) > 0) {
+			putlog('err', "No permissions for $user to access key " . $ARGV[0]);
+			print STDERR "Error: permission denied.\n";
 			bail(1);
 		}
 
