@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.19 2014/05/13 05:18:54 matthewm Exp matthewm $
+# $Id: passmg,v 2.20 2014/06/20 00:14:13 matthewm Exp $
 
 # Password Manager - (C) WebCentral Pty Ltd 
 
@@ -139,7 +139,7 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.19 2014/05/13 05:18:54 matthewm Exp matthewm $
+$Id: passmg,v 2.20 2014/06/20 00:14:13 matthewm Exp $
 
 =head1 AUTHOR
 
@@ -216,7 +216,7 @@ sub change_key ($);
 sub read_passfile($);
 
 $VER = do {
-	my @r = (q$Revision: 2.19 $ =~ /\d+/g);
+	my @r = (q$Revision: 2.20 $ =~ /\d+/g);
 	sprintf "%d."."%02d", @r
 };
 
