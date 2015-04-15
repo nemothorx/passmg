@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 
-# $Id: passmg,v 2.20 2014/06/20 00:14:13 matthewm Exp $
-
 # Password Manager - (C) WebCentral Pty Ltd 
 
 # This program is free software; you can redistribute it and/or modify
@@ -139,11 +137,11 @@ gpg(1)
 
 =head1 VERSION
 
-$Id: passmg,v 2.20 2014/06/20 00:14:13 matthewm Exp $
+2.20
 
 =head1 AUTHOR
 
-Matthew Melvin <matthewm@webcentral.com.au>
+Matthew Melvin
 
 =cut
 
@@ -215,10 +213,7 @@ sub cleanup_group ($);
 sub change_key ($);
 sub read_passfile($);
 
-$VER = do {
-	my @r = (q$Revision: 2.20 $ =~ /\d+/g);
-	sprintf "%d."."%02d", @r
-};
+$VER = "2.20";
 
 $ARGV0 = basename($0);
 $ARGV0 =~ /(.+)/;
