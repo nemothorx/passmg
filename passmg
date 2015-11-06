@@ -594,20 +594,14 @@ sub main () {
 		}
 
 		$buf = $ARGV[0];
-		putlog('debug', "Resetting password for $buf by deleting and re-creating keys...");
-		unless (delete_keys($buf)) {
-			putlog('err', "Error while deleting the user key pair for $buf.");
-			print STDERR "Password change failed.\n";
-			bail(1);
-		}
-
+		putlog('debug', "Resetting password for $buf by creating replacement keys...");
 		unless (create_keys($buf)) {
 			putlog('err', "Error while creating the user key pair for $buf.");
 			print STDERR "Password change failed.\n";
 			bail(1);
 		}
 
-		# it's essentially a new key, re-encrypt everything they access
+		# it's an all new key, so re-encrypt everything they access
 		foreach (get_user_access($buf)) {	
 			putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
 			unless (encrypt_asc($_, $user, $pass, undef)) {
