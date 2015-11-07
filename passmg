@@ -137,7 +137,7 @@ gpg(1)
 
 =head1 VERSION
 
-2.20
+2.21
 
 =head1 AUTHOR
 
@@ -213,7 +213,7 @@ sub cleanup_group ($);
 sub change_key ($);
 sub read_passfile($);
 
-$VER = "2.20";
+$VER = "2.21";
 
 $ARGV0 = basename($0);
 $ARGV0 =~ /(.+)/;
