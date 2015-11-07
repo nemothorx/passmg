@@ -128,8 +128,20 @@ CREATE UNIQUE INDEX ascmbrs_index ON ascmbrs (
 
 =head1 BUGS
 
-To date this script has only been tested and used on Linux.  It is entirely
-possible it may not work at all on other platforms.
+Passmg has to run as suid in order to read the mysql password from a secure
+config but perl no longer supports suid scripts
+
+When changing a users password or acccess, only the latest version of a key
+is updated so they do not have access to the key history.  If the owner key
+is change it could be possible to lose all access to old versions of the key.
+
+When a key is re-encrypted because of a user change rather than a key change,
+the timestamp is still updated as if it were a key change adding non-changese
+to the key history.
+
+By design, users can update or create keys they themselves can't read back.
+This is how escrow works.  However it also means they can obscure the real
+key, or even fill the database, by spamming changes.
 
 =head1 SEE ALSO
 
