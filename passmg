@@ -617,6 +617,7 @@ sub main () {
 		# it's an all new key, so re-encrypt everything they access
 		foreach (get_user_access($buf)) {	
 			putlog('debug', "Accesss for $buf to $_ has changed.  Re-encrypting...");
+			print STDOUT "Updating $_...\n";
 			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
@@ -709,6 +710,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%before)) {
 			putlog('debug', "Accesss for " . $opts{'delete-group'} . " to $_ has changed.  Re-encrypting...");
+			print STDOUT "Updating $_...\n";
 			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
@@ -806,6 +808,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%encrypt)) {
 			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
+			print STDOUT "Updating $_...\n";
 			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
@@ -875,6 +878,7 @@ sub main () {
 		$ret = 0;
 		foreach (keys(%encrypt)) {
 			putlog('debug', "Accesss to $_ has changed.  Re-encrypting...");
+			print STDOUT "Updating $_...\n";
 			unless (encrypt_asc($_, $user, $pass, undef)) {
 				putlog('err', "Error while updating the key $_.");
 				print STDERR "Update of $_ failed.\n";
@@ -2393,7 +2397,7 @@ sub encrypt_asc ($$$$) {
 	}
  
 	if (($pass) && ( ! -f "$file.asc")) {
-			fetch_asc($asc, undef);
+		fetch_asc($asc, undef);
 	}
 
 	if ( -f "$file.asc") {
