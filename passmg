@@ -126,22 +126,23 @@ CREATE UNIQUE INDEX ascmbrs_index ON ascmbrs (
        name, member
        );
 
-=head1 BUGS
+=head1 ISSUES
 
-Passmg has to run as suid in order to read the mysql password from a secure
+B<passmg> has to run as suid in order to read the mysql password from a secure
 config but perl no longer supports suid scripts
 
-When changing a users password or acccess, only the latest version of a key
-is updated so they do not have access to the key history.  If the owner key
-is change it could be possible to lose all access to old versions of the key.
+When changing a user's password or acccess, only the latest version of a key is
+updated so they do not have access to the key history.  If the owner key is
+change it could be possible to lose all access to old versions of the key. This
+is a trade off to limit the number of items that need to be re-encrypted.
 
-When a key is re-encrypted because of a user change rather than a key change,
-the timestamp is still updated as if it were a key change adding non-changese
-to the key history.
+When a key is re-encrypted because of a user change rather than a key change, a
+new key is saved as if it were a key change adding non-changes to the key
+history.  This is safer, but noisy.
 
-By design, users can update or create keys they themselves can't read back.
-This is how escrow works.  However it also means they can obscure the real
-key, or even fill the database, by spamming changes.
+By design, users can update or create keys they themselves can't read back (to
+allow for escrow).  However it also means they can obscure the real key, or
+even fill the database, by spamming changes.
 
 =head1 SEE ALSO
 
