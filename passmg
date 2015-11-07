@@ -1224,17 +1224,18 @@ sub show_help () {
 usage: $ARGV0 [<opts>] [<key>]
 
 
--v  show version. will display the RCS rev.
--h  show help. causes this message to be shown.
+--version|-v	show the version of the program.
+--help|-h	causes this message to be shown.
 
--d  debug.   enable more verbose logging.
--D  no debug.  disable more verbose logging.
+--debug|-d	enable more verbose logging.
+--no-debug|-D	disable more verbose logging.
 
--H <int>   Number of history entires to keep.
+--history|-H <int>
+	
 
 --from-file <file>
-      Read the key phrase to be encypted from the specified file.
-      For use with the --change-key and --create-key options.
+	Read the key phrase to be encypted from the specified file.
+	For use with the --change-key and --create-key options.
 
 Only one of:
 
