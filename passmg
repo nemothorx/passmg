@@ -173,12 +173,15 @@ use Data::Dumper;
 use Digest::MD5 qw/ md5_hex /;
 use MIME::Base64;
 
-use vars qw/ $VER $ARGV0 $DEBUG $TERM /;
+use vars qw/ $VER $ARGV0 $DEBUG $TERM $RUID $RGID /;
 use vars qw/ $DBHOST $DBNAME $DBUSER $DBPASS $DBHAND /;
 use vars qw/ $CFGFILE $TEMPDIR $OWNER $HIST /;
 use vars qw/ $TTYFLAGS $TERMIOS $MAXRATE /;
 
 $TERM = $ENV{'TERM'};
+$RUID = $ENV{'SUDO_UID'};
+$RGID = $ENV{'SUDO_GID'};
+
 %ENV = ();
 $ENV{'PATH'} = "/usr/bin:/bin";
 $ENV{'TERM'} = $TERM;
@@ -303,6 +306,27 @@ sub main () {
 		bail(1);
 	}
 
+        unless ($tty = ttyname(fileno(0))) {
+		$ret = $!;
+                putlog('warning', "Called from non-tty device: $ret");
+		$tty = "notty";
+        }
+
+	# are running under sudo or suid?
+	if (($UID < 1) && ($EUID == $UID)) {
+		printf STDERR "sudo_uid %d, uid: %d\n", $ENV{'SUDO_UID'}, $UID;
+		$UID = defined $RUID ? $RUID : $UID;
+		$GID = defined $RGID ? $RGID : $GID;
+	}
+
+	if ($EUID == $UID) {
+       		$OWNER = 1;
+		$user = 'root';
+	} else {
+		$OWNER = 0;
+		$user = getpwuid($UID);
+	}
+
         putlog('debug', "Started as " . scalar getpwuid($EUID) ."($EUID) for " . scalar getpwuid($UID) . "($UID) on $tty");
         putlog('notice', "Called by " . scalar getpwuid($UID) . " as: $args");
 
@@ -346,12 +370,6 @@ sub main () {
 		bail(0);
 	}
 
-        unless ($tty = ttyname(fileno(0))) {
-		$ret = $!;
-                putlog('warning', "Called from non-tty device: $ret");
-		$tty = "notty";
-        }
-
         if (defined($opts{'H'})) {
                 unless (($opts{'H'} > 0) && ($opts{'H'} =~ /^(\d+)$/)) {
                         print STDERR "Error: invalid history option specified.\n";
@@ -379,14 +397,6 @@ sub main () {
 		bail(1);
         }
 
-
-	if ($EUID == $UID) {
-		$OWNER = 1;
-		$user = 'root';
-	} else {
-		$OWNER = 0;
-		$user = getpwuid($UID);
-	}
 
 	# if we still have privleges (ie, we're using the sysytem config) then drop them now
 	unless (($EUID == $UID) && ($EGID == $GID)) {
