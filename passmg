@@ -176,7 +176,7 @@ use MIME::Base64;
 use vars qw/ $VER $ARGV0 $DEBUG $TERM /;
 use vars qw/ $DBHOST $DBNAME $DBUSER $DBPASS $DBHAND /;
 use vars qw/ $CFGFILE $TEMPDIR $OWNER $HIST /;
-use vars qw/ $TTYFLAGS $TERMIOS /;
+use vars qw/ $TTYFLAGS $TERMIOS $MAXRATE /;
 
 $TERM = $ENV{'TERM'};
 %ENV = ();
@@ -214,6 +214,7 @@ sub decrypt_asc ($$$);
 sub import_keys ($);
 sub fetch_asc ($$);
 sub get_updates ($$);
+sub check_rate($);
 sub save_asc ($);
 sub delete_asc ($);
 sub list_keys ($);
@@ -246,6 +247,8 @@ foreach ( "/etc", "/usr/local/etc/") {
 }
 
 $OWNER = 0;
+
+$MAXRATE = "3:3600";
 
 $TERMIOS = undef;
 $TTYFLAGS = undef;
@@ -891,7 +894,13 @@ sub main () {
 		print STDOUT "Members succesfully removed from group " . $opts{'rem-grp-access'} . "\n";
 		bail(0);
 	} elsif ($opts{'create-key'}) {
-		unless (check_asc($opts{'create-key'})) {
+		if (check_asc($opts{'create-key'})) {
+			unless (check_rate($opts{'create-key'})) {
+				putlog('err', "Attempted to change key " . $opts{'create-key'} . " but rate exceeded.");
+				print STDERR "Fatal: key " . $opts{'create-key'} . " changing too often.\n";
+				bail(1);
+			}
+		} else {
 			unless (defined($ARGV[0])) {
 				print STDERR "Error: no initial access specified for new key.\n";
 		                show_help();
@@ -984,6 +993,12 @@ sub main () {
 		unless (check_asc($opts{'change-key'})) {
 			putlog('err', "Attempted to change key " . $opts{'change-key'} . " but it doesn't exist.");
 			print STDERR "Fatal: key " . $opts{'change-key'} . " doesn't exist.\n";
+			bail(1);
+		}
+
+		unless (check_rate($opts{'change-key'})) {
+			putlog('err', "Attempted to change key " . $opts{'change-key'} . " but rate exceeded.");
+			print STDERR "Fatal: key " . $opts{'change-key'} . " changing too often.\n";
 			bail(1);
 		}
 
@@ -2717,6 +2732,51 @@ sub get_updates ($$) {
 	}
 
 	return(@upds);
+}
+
+sub check_rate ($) {
+	my($asc) = $_[0];
+	my($cnt, $sec, $sql, $qry, $res);
+
+	unless (defined($MAXRATE)) {
+		return(1);
+	}
+
+	unless ($MAXRATE =~ /^(\d+):(\d+)$/) {
+		putlog('err', "Error: an invalid maxrate has been specified: $MAXRATE");
+		putlog STDERR "Error: an invalid maxrate has been specified: $MAXRATE\n";
+		return(0);
+	}
+
+	$cnt = $1;
+	$sec = time() - $2;
+
+	putlog('debug', "Fetching update history for $asc from database: $cnt");
+
+	$sql = "SELECT unix_timestamp(updated) FROM ascs WHERE name = '$asc' ORDER BY updated DESC LIMIT $cnt";
+
+	unless ($qry = $DBHAND->prepare($sql)) {
+		putlog('err', "Unable to prepare SQL query to fetch " . $asc . "'s ascs: " . $DBHAND->errstr);
+		return(0);
+	}
+
+	unless ($qry->execute()) {
+		putlog('err', "Unable to execute SQL query to fetch " . $asc . "'s ascs: " . $qry->errstr);
+		return(0);
+	}
+
+	putlog('debug', sprintf "%d row(s) returned by query: %s", $qry->rows(), $sql);
+
+	# there are not enough changes to worry about, we're fine
+	return (1) if ($qry->rows() < $cnt);
+
+	while ($res = $qry->fetchrow_hashref()) {
+		# our count included one older then $sec, we're fine
+		return (1) if ($res->{'unix_timestamp(updated)'} < $sec);
+	}
+
+	# found enough entires, but they're all too new, too fast
+	return(0);
 }
 
 sub fetch_asc ($$) {
