@@ -150,7 +150,7 @@ gpg(1)
 
 =head1 VERSION
 
-2.21
+2.22
 
 =head1 AUTHOR
 
@@ -230,7 +230,7 @@ sub cleanup_group ($);
 sub change_key ($);
 sub read_passfile($);
 
-$VER = "2.21";
+$VER = "2.22";
 
 $ARGV0 = basename($0);
 $ARGV0 =~ /(.+)/;
@@ -314,7 +314,6 @@ sub main () {
 
 	# are running under sudo or suid?
 	if (($UID < 1) && ($EUID == $UID)) {
-		printf STDERR "sudo_uid %d, uid: %d\n", $ENV{'SUDO_UID'}, $UID;
 		$UID = defined $RUID ? $RUID : $UID;
 		$GID = defined $RGID ? $RGID : $GID;
 	}
