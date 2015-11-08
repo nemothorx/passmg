@@ -140,10 +140,6 @@ When a key is re-encrypted because of a user change rather than a key change, a
 new key is saved as if it were a key change adding non-changes to the key
 history.  This is safer, but noisy.
 
-By design, users can update or create keys they themselves can't read back (to
-allow for escrow).  However it also means they can obscure the real key, or
-even fill the database, by spamming changes.
-
 =head1 SEE ALSO
 
 gpg(1)
