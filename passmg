@@ -1416,7 +1416,7 @@ sub read_passfile ($) {
 
 	unless (open($f, "<$file")) {
 		putlog('err', "Unable to open pass file: $file: $!");
-		putlog STDERR "Error: unable to open pass file: $file: $!\n";
+		print STDERR "Error: unable to open pass file: $file: $!\n";
 		return(undef);
 	}
 
@@ -1452,7 +1452,7 @@ sub save_passfile ($$) {
 
 	unless (open($f, ">$file")) {
 		putlog('err', "Unable to open pass file: $file: $!");
-		putlog STDERR "Error: unable to open pass file: $file: $!\n";
+		print STDERR "Error: unable to open pass file: $file: $!\n";
 		return(undef);
 	}
 
@@ -1460,7 +1460,7 @@ sub save_passfile ($$) {
 
 	unless (close($f)) {
 		putlog('err', "Unable to save pass file: $file: $!");
-		putlog STDERR "Error: unable to save pass file: $file: $!\n";
+		print STDERR "Error: unable to save pass file: $file: $!\n";
 		return(undef);
 	}
 
