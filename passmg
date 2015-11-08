@@ -146,7 +146,7 @@ gpg(1)
 
 =head1 VERSION
 
-2.22
+2.23
 
 =head1 AUTHOR
 
@@ -225,8 +225,9 @@ sub cleanup_user ($);
 sub cleanup_group ($);
 sub change_key ($);
 sub read_passfile($);
+sub save_passfile($$);
 
-$VER = "2.22";
+$VER = "2.23";
 
 $ARGV0 = basename($0);
 $ARGV0 =~ /(.+)/;
@@ -297,6 +298,7 @@ sub main () {
 		"rem-key-access:s" => \$opts{'rem-key-access'},
 		"change-pass" => \$opts{'change-pass'},
 		"f|from-file:s" => \$opts{'f'},
+		"F|to-file:s" => \$opts{'F'},
 	)) {
 		show_help();
 		bail(1);
@@ -376,11 +378,6 @@ sub main () {
 
 	$HIST = 1 if ($HIST < 1);
 
-	# we're going to change working dir, so make the file absolute if it's not already
-        if ($opts{'F'}) {
-                $file = ($opts{'F'} =~ /^\/|^[a-zA-Z]:/) ? $opts{'F'} : getcwd() . "/" . $opts{'F'};
-        }
-
 	# only one long option allowed at a time
 	if ((scalar grep { /../ && defined($opts{$_}) } keys %opts) > 1) {
 		print STDERR "Error: only one action may be specified at once.\n";
@@ -416,7 +413,6 @@ sub main () {
 		$ARGV[$buf] =~ /(.*)/;
 		$ARGV[$buf] = $1;
 	}
-	
 
 	# setup signal handlers to do a clean exit
 	foreach ('HUP', 'INT', 'QUIT', 'TERM') {
@@ -433,10 +429,14 @@ sub main () {
 		bail(1);
 	}
 
-	# if we intend reading from a file, we need to make the path
+	# if we intend using a file, we need to make the path
 	# absolute before we change working directory.
 	if ($opts{'f'} && ($opts{'f'} !~ m!^/!)) {
 		$opts{'f'} = sprintf "%s/%s", getcwd(), $opts{'f'};
+	}
+	if ($opts{'F'} && ($opts{'F'} !~ m!^/!)) {
+		$opts{'F'} = sprintf "%s/%s", getcwd(), $opts{'F'};
+		$HIST = 1; # only the latest key is saved to file
 	}
 
 	eval { $TEMPDIR = tempdir("$ARGV0.XXXXXX", DIR => "/var/tmp/" ); };
@@ -1203,6 +1203,15 @@ sub main () {
 				if ($buf =~ /^=\?[^?]+\?B?(.*)\?=/) {
 					$buf = decode_base64($1);
 				}
+				if ($opts{'F'}) {
+					unless (save_passfile($opts{'F'}, $buf)) {
+						putlog('err', "Error while saving the password to file: " . $opts{'F'});
+						print STDERR "Error: unable to save to file: " . $opts{'F'} . "\n";
+						bail(1);
+					}
+					print "Pass from $upd saved to " . $opts{'F'} . "\n";
+					bail(0);
+				}
 				$buf .= "\n" if ($buf !~ /\n$/);
 				push(@out, "######### $upd ########## \n$buf");
 				$ret = 0;
@@ -1273,6 +1282,10 @@ usage: $ARGV0 [<opts>] [<key>]
 --from-file <file>
 	Read the key phrase to be encypted from the specified file.
 	For use with the --change-key and --create-key options.
+
+--to-file <file>
+	Save the retrieved key to the specified file. for use with
+	the default display key action.
 
 Only one of:
 
@@ -1430,6 +1443,28 @@ sub read_passfile ($) {
         }
 
 	return($buf);
+}
+
+sub save_passfile ($$) {
+	my($file) = $_[0];
+	my($pass) = $_[1];
+	my($f);
+
+	unless (open($f, ">$file")) {
+		putlog('err', "Unable to open pass file: $file: $!");
+		putlog STDERR "Error: unable to open pass file: $file: $!\n";
+		return(undef);
+	}
+
+	print $f $pass;
+
+	unless (close($f)) {
+		putlog('err', "Unable to save pass file: $file: $!");
+		putlog STDERR "Error: unable to save pass file: $file: $!\n";
+		return(undef);
+	}
+
+	return(1);
 }
 
 sub read_config ($) {
