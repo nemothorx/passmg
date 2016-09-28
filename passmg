@@ -2464,7 +2464,7 @@ sub encrypt_asc ($$$$) {
 
 	return(0) unless (@keys = import_keys($asc));
 	foreach (@keys) {
-		push(@files, "-r", $_);
+		push(@files, "-r", "$_@");
 	}
 
 	$buf = open($p, "|-");
