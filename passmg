@@ -276,7 +276,7 @@ sub main () {
 		"h|help" => \$opts{'h'},
 		"d|debug" => \$opts{'d'},
 		"D|no-debug" => \$opts{'D'},
-		"j|config:s" => \$opts{'c'},
+		"c|config:s" => \$opts{'c'},
 		"H|history:i" => \$opts{'H'},
 		"initialise" => \$opts{'initialise'},
 		"create-user:s" => \$opts{'create-user'},
