@@ -1546,10 +1546,10 @@ sub check_keys ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			bail(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '-q', '--no-secmem-warning',
+		putlog('debug', join(" ", ('gpg1', '-q', '--no-secmem-warning',
 			'--list-secret-keys', '--no-default-keyring',
 			'--keyring', "$file.pub", '--secret-keyring', "$file.sec")));
-		{ exec {'gpg'} ('gpg', '-q', '--no-secmem-warning',
+		{ exec {'gpg1'} ('gpg1', '-q', '--no-secmem-warning',
 			'--list-secret-keys', '--no-default-keyring',
 			'--keyring', "$file.pub", '--secret-keyring', "$file.sec"); }
 		$ret = $!;
@@ -1778,11 +1778,11 @@ sub create_keys ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '--no-greeting', '--no-secmem-warning', 
+		putlog('debug', join(" ", ('gpg1', '--no-greeting', '--no-secmem-warning', 
 			'--no-default-keyring',
 			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
 			'--batch', '--gen-key', '--yes', '-v', '--logger-fd', '1')));
-		{ exec {'gpg'} ('gpg', '--no-greeting', '--no-secmem-warning', 
+		{ exec {'gpg1'} ('gpg1', '--no-greeting', '--no-secmem-warning', 
 			'--no-default-keyring',
 			'--secret-keyring', '/dev/null', '--keyring', '/dev/null',
 			'--batch', '--gen-key', '--yes', '-v', '--logger-fd', '1'); }
@@ -1855,7 +1855,7 @@ sub check_auth ($$) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '-q', '-a', '-o', '/dev/null',
+		putlog('debug', join(" ", ('gpg1', '-q', '-a', '-o', '/dev/null',
 			   '--no-secmem-warning',
 			   '--no-tty', '--passphrase-fd', '0',
 			   '--batch',
@@ -1863,7 +1863,7 @@ sub check_auth ($$) {
 			   '--keyring', "$file.pub",
 			   '--secret-keyring', "$file.sec",
 			   '-u', "$usr", '-s', "$file.sec")));
-		{ exec {'gpg'} ('gpg', '-q', '-a', '-o', '/dev/null',
+		{ exec {'gpg1'} ('gpg1', '-q', '-a', '-o', '/dev/null',
 			   '--no-secmem-warning',
 			   '--no-tty', '--passphrase-fd', '0',
 			   '--batch',
@@ -2387,11 +2387,11 @@ sub check_asc ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			bail(1);
 		}       
-		putlog('debug', "exec: " . join(" ", 'gpg', '--no-secmem-warning',
+		putlog('debug', "exec: " . join(" ", 'gpg1', '--no-secmem-warning',
                         '--list-only', '--no-default-keyring', '--logger-fd', '1',
                         '--keyring', '/dev/null', '--secret-keyring', '/dev/null',
                         "$file.asc"));
-		{ exec {'gpg'} ('gpg', '--no-secmem-warning',
+		{ exec {'gpg1'} ('gpg1', '--no-secmem-warning',
                         '--list-only', '--no-default-keyring', '--logger-fd', '1',
                         '--keyring', '/dev/null', '--secret-keyring', '/dev/null',
                         "$file.asc"); }
@@ -2481,10 +2481,10 @@ sub encrypt_asc ($$$$) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '-a', '--yes', '--encrypt', '--always-trust', 
+		putlog('debug', join(" ", ('gpg1', '-a', '--yes', '--encrypt', '--always-trust', 
 			'--no-secmem-warning',
 			@files, '-o', "$file.asc")));
-		{ exec {'gpg'} ('gpg', '-a', '--yes', '--encrypt', '--always-trust', 
+		{ exec {'gpg1'} ('gpg1', '-a', '--yes', '--encrypt', '--always-trust', 
 			'--no-secmem-warning',
 			@files, '-o', "$file.asc"); };
 		$ret = $!;
@@ -2571,13 +2571,13 @@ sub decrypt_asc ($$$) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '--decrypt', 
+		putlog('debug', join(" ", ('gpg1', '--decrypt', 
 			'--no-tty', '--passphrase-fd', fileno($r), '--batch',
 			'--no-secmem-warning', '--no-default-keyring',
 			'--secret-keyring', "$userfile.sec",
 			'--keyring', "$userfile.pub", '-u', "$user",
 			"$ascfile.asc")));
-		{ exec {'gpg'} ('gpg', '--decrypt', 
+		{ exec {'gpg1'} ('gpg1', '--decrypt', 
 			'--no-tty', '--passphrase-fd', fileno($r), '--batch',
 			'--no-secmem-warning', '--no-default-keyring',
 			'--secret-keyring', "$userfile.sec",
@@ -2717,8 +2717,8 @@ sub import_keys ($) {
 			print STDERR "Error: unable to map gpg's stderr to /dev/null: $ret\n";
 			exit(1);
 		}       
-		putlog('debug', join(" ", ('gpg', '--fast-import', '--no-secmem-warning', @files)));
-		{ exec {'gpg'} ('gpg', '--fast-import', '--no-secmem-warning', @files); };
+		putlog('debug', join(" ", ('gpg1', '--fast-import', '--no-secmem-warning', @files)));
+		{ exec {'gpg1'} ('gpg1', '--fast-import', '--no-secmem-warning', @files); };
 		$ret = $!;
 		putlog('err',  "Error: unable to exec gpg for import: $ret");
 		print STDERR "Error: unable to exec gpg for import: $ret\n";
@@ -3212,13 +3212,13 @@ sub change_key ($) {
 		return(0) unless (fetch_keys($usr));
 	}
 
-	putlog('debug', join(" ", ('gpg', '-q', 
+	putlog('debug', join(" ", ('gpg1', '-q', 
 		'--no-secmem-warning',
 		'--no-default-keyring',
 		'--keyring', "$file.pub",
 		'--secret-keyring', "$file.sec",
 		'--edit-key', $usr, 'passwd', 'save', 'quit')));
-	system {'gpg'} ('gpg', '-v',
+	system {'gpg1'} ('gpg1', '-v',
 		'--no-secmem-warning',
 		'--no-default-keyring',
 		'--keyring', "$file.pub",
